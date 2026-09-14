@@ -38,3 +38,6 @@ lcu_debug.txt
 reasonix.toml
 
 .claude
+
+# local build artifacts
+data/
