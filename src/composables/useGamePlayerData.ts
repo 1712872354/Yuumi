@@ -16,6 +16,7 @@ import type {
   PremadePlayerLike,
   ChampionMasteryItem,
   StreakInfo,
+  ChampSelectSessionLike,
 } from "../types/gameInfo";
 import { resolvePlayerChampionId } from "../types/gameInfo";
 import type {
@@ -28,52 +29,28 @@ import type { SummonerDisplay } from "../api/lcu";
 import { computePremadeColors } from "./usePremadeGroup";
 import { lazySetItem } from "../utils/lazyStorage";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
+import { TtlCache } from "../utils/ttlCache";
 
-// ── 排位数据缓存（puuid → { data, timestamp }），带 LRU / 容量上限保护，避免内存泄露
-const rankCache = new Map<string, { data: RankedStats; timestamp: number }>();
-const RANK_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
-const RANK_CACHE_MAX_SIZE = 100; // 最多缓存 100 个玩家的排位信息
-
-function getRankFromCache(puuid: string) {
-  const cached = rankCache.get(puuid);
-  if (!cached) return null;
-  if (Date.now() - cached.timestamp >= RANK_CACHE_TTL) {
-    rankCache.delete(puuid);
-    return null;
-  }
-  return cached.data;
+/** LCU 英雄熟练度原始条目（字段命名可能因接口版本略有差异） */
+interface RawMasteryItem {
+  championId?: number;
+  champion_id?: number;
+  championLevel?: number;
+  masteryLevel?: number;
+  level?: number;
+  championPoints?: number;
+  points?: number;
+  score?: number;
+  highestGrade?: string;
+  highest_grade?: string;
+  championPointsSinceLastLevel?: number;
+  championPointsUntilNextLevel?: number;
+  tokensEarned?: number;
 }
 
-function setRankToCache(puuid: string, data: RankedStats) {
-  if (rankCache.size >= RANK_CACHE_MAX_SIZE) {
-    const firstKey = rankCache.keys().next().value;
-    if (firstKey) rankCache.delete(firstKey);
-  }
-  rankCache.set(puuid, { data, timestamp: Date.now() });
-}
-
-// ── 英雄熟练度数据缓存（puuid → { data, timestamp }）
-const masteryCache = new Map<string, { data: ChampionMasteryItem[]; timestamp: number }>();
-const MASTERY_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
-const MASTERY_CACHE_MAX_SIZE = 100;
-
-function getMasteryFromCache(puuid: string) {
-  const cached = masteryCache.get(puuid);
-  if (!cached) return null;
-  if (Date.now() - cached.timestamp >= MASTERY_CACHE_TTL) {
-    masteryCache.delete(puuid);
-    return null;
-  }
-  return cached.data;
-}
-
-function setMasteryToCache(puuid: string, data: ChampionMasteryItem[]) {
-  if (masteryCache.size >= MASTERY_CACHE_MAX_SIZE) {
-    const firstKey = masteryCache.keys().next().value;
-    if (firstKey) masteryCache.delete(firstKey);
-  }
-  masteryCache.set(puuid, { data, timestamp: Date.now() });
-}
+// ── 排位 / 熟练度缓存：5 分钟 TTL，最多 100 个玩家
+const rankCache = new TtlCache<RankedStats>(5 * 60 * 1000, 100);
+const masteryCache = new TtlCache<ChampionMasteryItem[]>(5 * 60 * 1000, 100);
 
 export async function fetchPlayerMastery(
   puuid?: string,
@@ -83,16 +60,18 @@ export async function fetchPlayerMastery(
   if (!puuid && !summonerId) return [];
 
   if (puuid) {
-    const cached = getMasteryFromCache(puuid);
+    const cached = masteryCache.get(puuid);
     if (cached && cached.length > 0) {
       return cached;
     }
   }
 
   // 1. 优先按 puuid 查询
-  let mResp: { success: boolean; data?: any; error?: any } = { success: false };
+  let mResp: { success: boolean; data?: RawMasteryItem[]; error?: string } = {
+    success: false,
+  };
   if (puuid) {
-    mResp = await lcuRequest<any>(
+    mResp = await lcuRequest<RawMasteryItem[]>(
       "GET",
       `/lol-champion-mastery/v1/${puuid}/champion-mastery`,
     );
@@ -100,7 +79,7 @@ export async function fetchPlayerMastery(
 
   // 2. 若是当前玩家且按 puuid 失败（或无 puuid），降级到 local-player
   if ((!mResp.success || !mResp.data) && isMe) {
-    mResp = await lcuRequest<any>(
+    mResp = await lcuRequest<RawMasteryItem[]>(
       "GET",
       "/lol-champion-mastery/v1/local-player/champion-mastery",
     );
@@ -108,14 +87,14 @@ export async function fetchPlayerMastery(
 
   // 3. 如果仍未成功，尝试按 summonerId 查询
   if ((!mResp.success || !mResp.data) && summonerId) {
-    mResp = await lcuRequest<any>(
+    mResp = await lcuRequest<RawMasteryItem[]>(
       "GET",
       `/lol-champion-mastery/v1/summoners/${summonerId}/champion-mastery`,
     );
   }
 
   if (mResp.success && Array.isArray(mResp.data)) {
-    const normalized: ChampionMasteryItem[] = mResp.data.map((item: any) => ({
+    const normalized: ChampionMasteryItem[] = mResp.data.map((item) => ({
       championId: Number(item.championId ?? item.champion_id ?? 0),
       championLevel: Number(item.championLevel ?? item.masteryLevel ?? item.level ?? 0),
       championPoints: Number(item.championPoints ?? item.points ?? item.score ?? 0),
@@ -125,7 +104,7 @@ export async function fetchPlayerMastery(
       tokensEarned: item.tokensEarned,
     }));
     if (puuid) {
-      setMasteryToCache(puuid, normalized);
+      masteryCache.set(puuid, normalized);
     }
     return normalized;
   }
@@ -831,7 +810,7 @@ export function useGamePlayerData(
           : Promise.resolve([] as MatchDisplay[]),
         safeInfo.puuid
           ? (() => {
-              const cached = getRankFromCache(safeInfo.puuid);
+              const cached = rankCache.get(safeInfo.puuid);
               if (cached) {
                 return Promise.resolve({ success: true, data: cached });
               }
@@ -841,7 +820,7 @@ export function useGamePlayerData(
               )
                 .then((rResp) => {
                   if (rResp.success && rResp.data) {
-                    setRankToCache(safeInfo.puuid, rResp.data);
+                    rankCache.set(safeInfo.puuid, rResp.data);
                   }
                   return rResp;
                 })
@@ -1578,7 +1557,7 @@ export function useGamePlayerData(
 
   // 团队内容签名：成员 cellId + 英雄 ID（包含锁定、预选及 actions 挑选）。session 高频事件中仅倒计时变化时签名不变，跳过无效重载
   let lastSessionTeamSig = "";
-  const teamSig = (team: ChampSelectPlayer[], session?: any) =>
+  const teamSig = (team: ChampSelectPlayer[], session?: ChampSelectSessionLike | null) =>
     (team || [])
       .map((p) => {
         const champId = resolvePlayerChampionId(p, session);
