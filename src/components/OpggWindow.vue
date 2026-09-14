@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { onMounted } from "vue";
+import { onMounted, onUnmounted } from "vue";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppConfig } from "../api/lcu";
 import { setLocale } from "../i18n";
 import OpggModal from "./OpggModal.vue";
@@ -18,6 +19,8 @@ const isDark =
   savedTheme === "Dark" || (savedTheme !== "Light" && isSystemDark);
 document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
 
+let unlistenSelect: UnlistenFn | null = null;
+
 onMounted(async () => {
   // 同步语言配置
   try {
@@ -28,6 +31,22 @@ onMounted(async () => {
   } catch (e) {
     console.warn("[OpggWindow] 获取本地配置失败:", e);
   }
+
+  // 主窗口「攻略」按钮再次触发时切换英雄
+  unlistenSelect = await listen<number>("opgg-select-champion", (event) => {
+    const id = Number(event.payload);
+    if (id > 0) {
+      try {
+        localStorage.setItem("yuumi_opgg_champ", String(id));
+      } catch {
+        /* ignore */
+      }
+      // 触发 OpggModal 重新读取：通过自定义事件
+      window.dispatchEvent(
+        new CustomEvent("yuumi-opgg-select-champ", { detail: id }),
+      );
+    }
+  });
 
   // 禁用右键菜单
   document.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -42,6 +61,10 @@ onMounted(async () => {
       e.preventDefault();
     }
   });
+});
+
+onUnmounted(() => {
+  unlistenSelect?.();
 });
 </script>
 

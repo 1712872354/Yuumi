@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, inject } from "vue";
 import { useI18n } from "vue-i18n";
 import { NVirtualList } from "naive-ui";
 import {
@@ -55,6 +55,16 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const { handleCareerClick } = usePlayerSearch();
+const openOpgg = inject<(championId?: number) => void>("openOpgg");
+
+function onGuideClick(e: MouseEvent) {
+  e.stopPropagation();
+  if (resolvedChampId.value > 0) {
+    openOpgg?.(resolvedChampId.value);
+  } else {
+    openOpgg?.();
+  }
+}
 
 const POSITION_LABELS: Record<string, string> = {
   TOP: "上单",
@@ -354,8 +364,8 @@ function copyGameId(e: MouseEvent, gameId: number) {
       </div>
     </div>
 
-    <!-- 擅长英雄 -->
-    <div v-if="topMasteries.length" class="mastery-row">
+    <!-- 擅长英雄 / 攻略 -->
+    <div class="mastery-row">
       <span class="mastery-label">{{ $t("gameInfo.mastery", "擅长") }}:</span>
       <div
         v-for="m in topMasteries"
@@ -366,6 +376,14 @@ function copyGameId(e: MouseEvent, gameId: number) {
         <LcuImage :src="getChampionIcon(m.championId)" class="mastery-icon" />
         <span v-if="m.championLevel >= 7" class="mastery-star">★</span>
       </div>
+      <button
+        v-if="openOpgg"
+        class="guide-btn"
+        :title="resolvedChampId > 0 ? '查看该英雄 OP.GG 攻略' : '打开 OP.GG'"
+        @click="onGuideClick"
+      >
+        攻略
+      </button>
     </div>
 
     <!-- 统计区：内联 标签:值 -->
@@ -674,6 +692,24 @@ function copyGameId(e: MouseEvent, gameId: number) {
   color: #facc15;
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
   line-height: 1;
+}
+.guide-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  height: 18px;
+  padding: 0 7px;
+  border: none;
+  border-radius: 4px;
+  background: var(--primary-color-alpha-15, rgba(0, 210, 196, 0.15));
+  color: var(--primary-color, #00d2c4);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  line-height: 18px;
+  transition: background 0.12s ease;
+}
+.guide-btn:hover {
+  background: var(--primary-color-alpha-30, rgba(0, 210, 196, 0.3));
 }
 
 /* ─── 统计 ─── */

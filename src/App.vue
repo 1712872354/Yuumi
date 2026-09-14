@@ -172,6 +172,7 @@ function navigateTo(page: string) {
   currentPage.value = page;
 }
 provide("navigateTo", navigateTo);
+provide("openOpgg", openOpggWindow);
 
 const regionName = computed(() => {
   if (!platformId.value) return t("regions.HN1");
@@ -313,14 +314,32 @@ function toggleSidebar() {
   isSidebarExpanded.value = !isSidebarExpanded.value;
 }
 
-async function openOpggWindow() {
+async function openOpggWindow(championId?: number) {
   if (!store.isConnected) {
     showToast(t("common.lcuNotConnected"), "warning");
     return;
   }
+  // 传递目标英雄给 OP.GG 窗口
+  if (championId && championId > 0) {
+    try {
+      localStorage.setItem("yuumi_opgg_champ", String(championId));
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      localStorage.removeItem("yuumi_opgg_champ");
+    } catch {
+      /* ignore */
+    }
+  }
   const existing = await WebviewWindow.getByLabel("opgg");
   if (existing) {
     await existing.setFocus();
+    // 已有窗口时通过事件通知切换英雄
+    if (championId && championId > 0) {
+      await existing.emit("opgg-select-champion", championId);
+    }
     return;
   }
 
@@ -767,7 +786,7 @@ async function handleClose() {
               :has-update="hasUpdate"
               @navigate="navigate"
               @toggle-sidebar="toggleSidebar"
-              @open-opgg="openOpggWindow"
+              @open-opgg="() => openOpggWindow()"
               @reconnect="handleReconnect"
             />
 

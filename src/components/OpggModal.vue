@@ -96,28 +96,42 @@ onMounted(async () => {
   await loadPerkData();
   await loadChampionSummary();
 
+  // 从 GameInfo 卡片「攻略」按钮传入的目标英雄
   let targetChampionId: number | null = null;
   try {
-    const config = await fetchConfig();
-    const funcs = config.Functions;
-    if (funcs && funcs.EnableAutoSelectChampion) {
-      const list = [
-        funcs.AutoSelectChampion,
-        funcs.AutoSelectChampionMid,
-        funcs.AutoSelectChampionTop,
-        funcs.AutoSelectChampionSup,
-        funcs.AutoSelectChampionJug,
-        funcs.AutoSelectChampionBot,
-      ];
-      for (const arr of list) {
-        if (arr && arr.length > 0 && arr[0] > 0) {
-          targetChampionId = arr[0];
-          break;
+    const fromCard = localStorage.getItem("yuumi_opgg_champ");
+    if (fromCard) {
+      const id = Number(fromCard);
+      if (id > 0) targetChampionId = id;
+      localStorage.removeItem("yuumi_opgg_champ");
+    }
+  } catch {
+    /* ignore */
+  }
+
+  if (!targetChampionId) {
+    try {
+      const config = await fetchConfig();
+      const funcs = config.Functions;
+      if (funcs && funcs.EnableAutoSelectChampion) {
+        const list = [
+          funcs.AutoSelectChampion,
+          funcs.AutoSelectChampionMid,
+          funcs.AutoSelectChampionTop,
+          funcs.AutoSelectChampionSup,
+          funcs.AutoSelectChampionJug,
+          funcs.AutoSelectChampionBot,
+        ];
+        for (const arr of list) {
+          if (arr && arr.length > 0 && arr[0] > 0) {
+            targetChampionId = arr[0];
+            break;
+          }
         }
       }
+    } catch (e) {
+      console.error("获取应用配置失败:", e);
     }
-  } catch (e) {
-    console.error("获取应用配置失败:", e);
   }
 
   if (targetChampionId) {
@@ -131,7 +145,17 @@ onUnmounted(() => {
   if (themeObserver) {
     themeObserver.disconnect();
   }
+  window.removeEventListener("yuumi-opgg-select-champ", onExternalSelectChamp);
 });
+
+function onExternalSelectChamp(e: Event) {
+  const id = Number((e as CustomEvent<number>).detail);
+  if (id > 0) {
+    view.value = "build";
+    fetchBuild(id);
+  }
+}
+window.addEventListener("yuumi-opgg-select-champ", onExternalSelectChamp);
 
 watch([region, mode, tier, position], () => {
   if (view.value === "tier") {
