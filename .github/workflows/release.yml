@@ -134,11 +134,11 @@ jobs:
           $VERSION = "${{ needs.create-release.outputs.version }}" -replace '^v', ''
           $path = "src-tauri/tauri.conf.json"
           $raw = Get-Content $path -Raw
-          # 仅替换顶层 version 字段，避免 ConvertTo-Json 破坏结构
-          $raw = $raw -replace '("version"\s*:\s*")[^"]+(")', "`$1$VERSION`$2"
+          # ${1} 必须带花括号，否则会与版本号连成 $11 而损坏 JSON
+          $raw = $raw -replace '("version"\s*:\s*")[^"]+(")', ('${1}' + $VERSION + '${2}')
           Set-Content -Path $path -Value $raw -Encoding UTF8
           Write-Host "Set version to $VERSION"
-          Select-String -Path $path -Pattern '"version"'
+          Get-Content $path | Select-Object -First 6
 
       - name: Generate changelog
         id: changelog
