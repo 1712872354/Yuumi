@@ -323,6 +323,7 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
   flex-direction: column;
   gap: 16px;
   /* 不 flex:1，不 min-height:0，让高度由内容决定 */
+  min-width: 0;
 }
 
 .team-section {
@@ -330,6 +331,7 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
   flex-direction: column;
   gap: 8px;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .team-header {
@@ -413,34 +415,28 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
   font-weight: 700;
 }
 
-/* ─── 卡片网格：固定最小行高，列数随宽度自适应，不叠层 ─── */
+/* ─── 卡片网格：每队固定 5 列一行（对齐 LeagueAkari），窄窗口横向滚动 ─── */
 .team-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(200px, 1fr));
   gap: 10px;
-  /* 行高有下限，卡片内部战绩区自己滚动 */
   grid-auto-rows: minmax(340px, 380px);
   align-items: stretch;
+  /* 保证 5 张卡始终同一行，不够宽时由外层横向滚动 */
+  min-width: calc(200px * 5 + 10px * 4);
 }
 
-@media (max-width: 1500px) {
+/* 极窄窗口：降到 3 列，仍避免 4+1 孤儿卡 */
+@media (max-width: 960px) {
   .team-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(180px, 1fr));
+    min-width: calc(180px * 3 + 10px * 2);
   }
 }
-@media (max-width: 1200px) {
+@media (max-width: 640px) {
   .team-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-}
-@media (max-width: 900px) {
-  .team-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (max-width: 600px) {
-  .team-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(160px, 1fr));
+    min-width: calc(160px * 2 + 10px);
   }
 }
 </style>
