@@ -349,6 +349,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           draft: false
           prerelease: false
-          releaseId: ${{ needs.create-release.outputs.release_id }}
+          tag: ${{ needs.create-release.outputs.version }}
+          name: Yuumi ${{ needs.create-release.outputs.version }}
           body: "${{ steps.changelog.outputs.notes }}"
           artifacts: "./artifacts/installer/*,./artifacts/portable/*,./artifacts/updater/latest.json"
