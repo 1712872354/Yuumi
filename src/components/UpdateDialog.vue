@@ -202,7 +202,7 @@ function restore() {
 }
 
 function openReleasePage() {
-  openUrl("https://github.com/ISuuuu/Yuumi/releases/latest").catch(
+  openUrl("https://github.com/1712872354/Yuumi/releases/latest").catch(
     (err: unknown) => {
       console.error("Failed to open release page:", err);
     },

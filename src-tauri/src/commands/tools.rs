@@ -792,7 +792,7 @@ pub async fn get_release_changelog(
     log::info!("[get_release_changelog] 缓存未命中，请求 GitHub Releases API");
     let text = fetch_github_text(
         app.clone(),
-        "https://api.github.com/repos/ISuuuu/Yuumi/releases".into(),
+        "https://api.github.com/repos/1712872354/Yuumi/releases".into(),
     )
     .await?;
 

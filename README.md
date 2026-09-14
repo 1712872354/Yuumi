@@ -115,7 +115,7 @@ Yuumi/
 每次发版同时发布 `*_portable.zip`（绿色版，解压即用）：
 
 - 配置文件/数据库/缓存/WebView 数据均隔离到 `data/` 目录，可整体拷贝迁移，与安装版互不干扰
-- **支持自动更新**；也可到 [GitHub Releases](https://github.com/ISuuuu/Yuumi/releases/latest) 手动下载最新版
+- **支持自动更新**；也可到 [GitHub Releases](https://github.com/1712872354/Yuumi/releases/latest) 手动下载最新版
 
 ## 致谢
 

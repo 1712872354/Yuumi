@@ -236,11 +236,11 @@ jobs:
             platforms = @{
               "windows-x86_64" = @{
                 signature = $SIGNATURE.Trim()
-                url = "https://github.com/ISuuuu/Yuumi/releases/download/${TAG}/$($EXE_FILE.Name)"
+                url = "https://github.com/1712872354/Yuumi/releases/download/${TAG}/$($EXE_FILE.Name)"
               }
               "windows-x86_64-portable" = @{
                 signature = $PORTABLE_SIGNATURE.Trim()
-                url = "https://github.com/ISuuuu/Yuumi/releases/download/${TAG}/$($PORTABLE_ZIP.Name)"
+                url = "https://github.com/1712872354/Yuumi/releases/download/${TAG}/$($PORTABLE_ZIP.Name)"
               }
             }
           }

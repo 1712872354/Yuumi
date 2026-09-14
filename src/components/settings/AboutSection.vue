@@ -52,7 +52,7 @@ function openChangelog() {
 }
 
 function openRepo() {
-  openUrl("https://github.com/ISuuuu/Yuumi").catch((err) => {
+  openUrl("https://github.com/1712872354/Yuumi").catch((err) => {
     console.warn("[Settings] 无法打开开源仓库链接:", err);
   });
 }

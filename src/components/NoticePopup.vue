@@ -8,7 +8,7 @@ const emit = defineEmits<{
 }>();
 
 const NOTICE_URL =
-  "https://raw.githubusercontent.com/ISuuuu/Yuumi/main/NOTICE.md";
+  "https://raw.githubusercontent.com/1712872354/Yuumi/main/NOTICE.md";
 
 const AUTO_DISMISS_MS = 8000;
 

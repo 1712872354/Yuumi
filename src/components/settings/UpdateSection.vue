@@ -96,7 +96,7 @@ async function handleImmediateUpdate() {
 
 /** 便携版：跳转 GitHub Releases 手动下载新版 */
 function goToReleases() {
-  openUrl("https://github.com/ISuuuu/Yuumi/releases/latest").catch(
+  openUrl("https://github.com/1712872354/Yuumi/releases/latest").catch(
     (err: unknown) => console.error("打开 Releases 页面失败:", err),
   );
 }
