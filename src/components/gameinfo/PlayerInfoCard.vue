@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { useI18n } from "vue-i18n";
+import { NVirtualList } from "naive-ui";
 import {
   getChampionIcon,
   PREMADE_COLORS,
@@ -338,39 +339,46 @@ function copyName(e: MouseEvent) {
       </div>
     </div>
 
-    <!-- 战绩列表 -->
+    <!-- 战绩列表（虚拟滚动） -->
     <div class="matches">
       <div v-if="isLoading" class="empty">
         <span class="spinner"></span>
         <span>{{ $t("career.loading") }}</span>
       </div>
       <div v-else-if="isMatchHidden" class="empty">🔒 {{ $t("gameInfo.matchHidden", "战绩已隐藏") }}</div>
-      <div v-else-if="matches.length === 0" class="empty">{{ $t("career.empty") }}</div>
-      <template v-else>
-        <div
-          v-for="match in matches"
-          :key="match.gameId"
-          class="mi"
-          :class="{
-            'mi-win': match.win === true,
-            'mi-loss': match.win === false,
-            'mi-remake': match.win === null || match.remake,
-          }"
-        >
-          <LcuImage :src="getChampionIcon(match.championId)" class="mi-champ" />
-          <div class="mi-mid">
-            <span class="mi-mode">{{ match.name || "" }}</span>
-            <span class="mi-time">{{ match.shortTime || match.time }}</span>
+      <NVirtualList
+        v-else-if="matches.length"
+        class="match-list"
+        key-field="gameId"
+        :item-size="30"
+        :items="matches"
+        item-resizable
+      >
+        <template #default="{ item: match }">
+          <div
+            class="mi"
+            :class="{
+              'mi-win': match.win === true,
+              'mi-loss': match.win === false,
+              'mi-remake': match.win === null || match.remake,
+            }"
+          >
+            <LcuImage :src="getChampionIcon(match.championId)" class="mi-champ" />
+            <div class="mi-mid">
+              <span class="mi-mode">{{ match.name || "" }}</span>
+              <span class="mi-time">{{ match.shortTime || match.time }}</span>
+            </div>
+            <div class="mi-kda">
+              <span class="k">{{ match.kills }}</span>
+              <span class="s">/</span>
+              <span class="d">{{ match.deaths }}</span>
+              <span class="s">/</span>
+              <span class="a">{{ match.assists }}</span>
+            </div>
           </div>
-          <div class="mi-kda">
-            <span class="k">{{ match.kills }}</span>
-            <span class="s">/</span>
-            <span class="d">{{ match.deaths }}</span>
-            <span class="s">/</span>
-            <span class="a">{{ match.assists }}</span>
-          </div>
-        </div>
-      </template>
+        </template>
+      </NVirtualList>
+      <div v-else class="empty">{{ $t("career.empty") }}</div>
     </div>
   </div>
 </template>
@@ -389,6 +397,7 @@ function copyName(e: MouseEvent) {
   -webkit-backdrop-filter: blur(10px);
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   overflow: hidden;
+  height: 100%;
   min-height: 0;
   transition: filter 0.15s ease, box-shadow 0.15s ease;
 }
@@ -687,17 +696,18 @@ function copyName(e: MouseEvent) {
 .matches {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 2px;
+  position: relative;
 }
-.matches::-webkit-scrollbar {
-  width: 3px;
+.match-list {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
 }
-.matches::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.15);
-  border-radius: 2px;
+.match-list :deep(.n-scrollbar-content) {
+  padding-right: 2px;
 }
 
 .empty {

@@ -406,8 +406,8 @@ function premadeDotStyle(group: { colorIdx: number }) {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
-  min-height: 380px;
-  flex: 1;
+  /* 固定卡片高度，战绩区在卡内滚动 */
+  grid-auto-rows: 360px;
 }
 
 /* 窄窗口时自动 3 列 / 2 列 */
