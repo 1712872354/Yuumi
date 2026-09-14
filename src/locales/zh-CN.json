@@ -654,6 +654,7 @@
     "tagFateAlly": "上局队友",
     "tagFateEnemy": "上局对手",
     "tagPremade": "组队",
+    "tagPremadeN": "{count}黑",
     "tagWinStreak": "{count}连胜",
     "tagLoseStreak": "{count}连败",
     "tagHighWinRate": "高胜率",

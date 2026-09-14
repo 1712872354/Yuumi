@@ -56,6 +56,8 @@ export interface PremadePlayerLike {
   isBot?: boolean;
   botChampionId?: number;
   botName?: string;
+  /** 选人阶段 LCU 分配的位置（TOP/JUNGLE/MIDDLE/BOTTOM/UTILITY） */
+  assignedPosition?: string;
 }
 
 export type PremadeTarget = number | PremadePlayerLike;

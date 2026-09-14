@@ -47,6 +47,7 @@ const props = defineProps<{
   playerData?: PlayerData;
   side: "ally" | "enemy";
   premadeIdx?: number;
+  premadeSize?: number;
   savedMap?: Record<string, SavedPlayerMarker>;
   selfPuuid?: string;
   index: number;
@@ -54,6 +55,22 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const { handleCareerClick } = usePlayerSearch();
+
+const POSITION_LABELS: Record<string, string> = {
+  TOP: "上单",
+  JUNGLE: "打野",
+  MIDDLE: "中单",
+  BOTTOM: "下路",
+  UTILITY: "辅助",
+  NONE: "",
+  INVALID: "",
+};
+
+const assignedPosition = computed(() => {
+  const raw = props.player.assignedPosition;
+  if (!raw || raw === "NONE" || raw === "INVALID") return "";
+  return POSITION_LABELS[raw.toUpperCase()] || raw;
+});
 
 const resolvedChampId = computed(() => {
   if (props.player.championId && props.player.championId > 0) return props.player.championId;
@@ -191,12 +208,18 @@ const cardTags = computed(() => {
     tags.push({ text: t("gameInfo.tagFateEnemy"), cls: "tag-fate-enemy" });
   }
   if (props.premadeIdx !== undefined && props.premadeIdx >= 0 && premadeColor.value) {
+    const size = props.premadeSize && props.premadeSize >= 2 ? props.premadeSize : null;
     tags.push({
-      text: t("gameInfo.tagPremade", { size: "组" }),
+      text: size
+        ? t("gameInfo.tagPremadeN", { count: size })
+        : t("gameInfo.tagPremade", { size: "组" }),
       cls: "tag-premade",
       bg: premadeColor.value.dot,
       color: "#fff",
     });
+  }
+  if (assignedPosition.value) {
+    tags.push({ text: `当前:${assignedPosition.value}`, cls: "tag-pos" });
   }
   if (data.winRate !== undefined && data.winRate >= 55 && totalGames.value >= 10) {
     tags.push({ text: t("gameInfo.tagHighWinRate"), cls: "tag-high-wr" });
@@ -235,6 +258,12 @@ function copyName(e: MouseEvent) {
   const text = tagLine.value ? `${displayName.value}#${tagLine.value}` : displayName.value;
   if (!text) return;
   navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+function copyGameId(e: MouseEvent, gameId: number) {
+  e.stopPropagation();
+  if (!gameId) return;
+  navigator.clipboard?.writeText(String(gameId)).catch(() => {});
 }
 </script>
 
@@ -374,13 +403,15 @@ function copyName(e: MouseEvent) {
               'mi-loss': match.win === false,
               'mi-remake': match.win === null || match.remake,
             }"
-            :title="match.duration ? `${match.name} · ${match.duration}` : match.name"
+            :title="`${match.name || ''} · ${match.duration || ''}\n点击复制对局 ID`"
+            @click="copyGameId($event, match.gameId)"
           >
             <LcuImage :src="getChampionIcon(match.championId)" class="mi-champ" />
             <div class="mi-mid">
               <span class="mi-mode">{{ match.name || "" }}</span>
               <span class="mi-time">
                 {{ match.shortTime || match.time }}
+                <span v-if="match.duration" class="mi-dur">{{ match.duration }}</span>
                 <span v-if="match.remake" class="mi-remake-tag">重开</span>
               </span>
             </div>
@@ -710,6 +741,10 @@ function copyName(e: MouseEvent) {
   background: rgba(245, 158, 11, 0.18);
   color: #d97706;
 }
+.tag-pos {
+  background: var(--tier-blue-bg, rgba(59, 130, 246, 0.12));
+  color: var(--tier-blue, #3b82f6);
+}
 
 /* ─── 战绩 ─── */
 .matches {
@@ -763,7 +798,7 @@ function copyName(e: MouseEvent) {
   border-left: 3px solid transparent;
   flex-shrink: 0;
   transition: filter 0.12s ease;
-  cursor: default;
+  cursor: pointer;
 }
 .mi:hover {
   filter: brightness(1.06);
@@ -811,6 +846,10 @@ function copyName(e: MouseEvent) {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.mi-dur {
+  color: var(--text-dimmed, #9ca3af);
+  opacity: 0.85;
 }
 .mi-remake-tag {
   display: inline-flex;

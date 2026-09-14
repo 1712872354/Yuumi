@@ -160,6 +160,16 @@ function premadeDotStyle(group: { colorIdx: number }) {
   const c = PREMADE_COLORS[group.colorIdx % PREMADE_COLORS.length];
   return { background: c.dot };
 }
+
+function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "my" | "their"): number | undefined {
+  const idx = getPremadeIdx(p, side);
+  if (idx === undefined || idx < 0) return undefined;
+  let n = 0;
+  for (const m of team) {
+    if (getPremadeIdx(m, side) === idx) n++;
+  }
+  return n >= 2 ? n : undefined;
+}
 </script>
 
 <template>
@@ -217,6 +227,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
             :player-data="getPlayerData(p, i, 'ally')"
             side="ally"
             :premade-idx="getPremadeIdx(p, 'my')"
+            :premade-size="getPremadeSize(p, myTeam, 'my')"
             :saved-map="savedPlayerMap"
             :self-puuid="currentSummonerPuuid"
             :index="i"
@@ -264,6 +275,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
             :player-data="getPlayerData(p, i, 'enemy')"
             side="enemy"
             :premade-idx="getPremadeIdx(p, 'their')"
+            :premade-size="getPremadeSize(p, theirTeam, 'their')"
             :saved-map="savedPlayerMap"
             :self-puuid="currentSummonerPuuid"
             :index="i"

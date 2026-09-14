@@ -654,6 +654,7 @@
     "tagFateAlly": "Prev ally",
     "tagFateEnemy": "Prev enemy",
     "tagPremade": "Party",
+    "tagPremadeN": "Party {count}",
     "tagWinStreak": "{count}W streak",
     "tagLoseStreak": "{count}L streak",
     "tagHighWinRate": "High WR",
