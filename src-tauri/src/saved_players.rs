@@ -78,6 +78,10 @@ pub fn init_db() -> rusqlite::Result<Connection> {
     if !existing_cols.iter().any(|c| c == "auto_tag_stats") {
         conn.execute_batch("ALTER TABLE saved_players ADD COLUMN auto_tag_stats TEXT;")?;
     }
+    // 最近一次关系：ally / enemy
+    if !existing_cols.iter().any(|c| c == "last_relation") {
+        conn.execute_batch("ALTER TABLE saved_players ADD COLUMN last_relation TEXT;")?;
+    }
 
     // 迁移：将因此前数据采集 bug 误记录为 '0' 的对局模式默认全部更新为海克斯大乱斗 '2400'
     let _ = conn.execute(
@@ -126,6 +130,8 @@ pub struct GamePlayerEntry {
     pub profile_icon_id: i32,
     pub tag_line: Option<String>,
     pub champion_id: i32,
+    /// "ally" / "enemy" / ""（未知）
+    pub relation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -157,6 +163,9 @@ pub struct SavedPlayerDto {
     pub auto_reason: Option<String>,
     #[serde(default)]
     pub auto_tag_stats: Option<String>,
+    /// 最近一次同局关系：ally / enemy
+    #[serde(default)]
+    pub last_relation: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -196,13 +205,14 @@ fn row_to_saved_player(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedPlayerD
         auto_score: row.get(12).ok().flatten(),
         auto_reason: row.get(13).ok().flatten(),
         auto_tag_stats: row.get(14).ok().flatten(),
-        last_queue_type: row.get(15).ok().flatten(),
-        encounter_count: row.get::<usize, i32>(16).unwrap_or(1),
+        last_relation: row.get(15).ok().flatten(),
+        last_queue_type: row.get(16).ok().flatten(),
+        encounter_count: row.get::<usize, i32>(17).unwrap_or(1),
     })
 }
 
 const SAVED_PLAYER_COLS: &str =
-    "puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at, auto_tag, auto_score, auto_reason, auto_tag_stats";
+    "puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at, auto_tag, auto_score, auto_reason, auto_tag_stats, last_relation";
 
 fn row_to_encountered(row: &rusqlite::Row<'_>) -> rusqlite::Result<EncounteredGameDto> {
     Ok(EncounteredGameDto {
@@ -246,6 +256,7 @@ pub async fn record_encounters(
                        profile_icon_id = CASE WHEN ?2 = 0 THEN profile_icon_id ELSE ?2 END,
                        tag_line = CASE WHEN ?3 IS NULL OR ?3 = '' THEN tag_line ELSE ?3 END,
                        champion_id = CASE WHEN ?4 = 0 THEN champion_id ELSE ?4 END,
+                       last_relation = CASE WHEN ?8 = '' THEN last_relation ELSE ?8 END,
                        update_at = ?5,
                        last_met_at = ?5
                      WHERE puuid = ?6 AND self_puuid = ?7",
@@ -256,7 +267,8 @@ pub async fn record_encounters(
                         player.champion_id,
                         ts,
                         player.puuid,
-                        self_puuid
+                        self_puuid,
+                        player.relation
                     ],
                 )
                 .map_err(|e| format!("更新已记录玩家失败: {}", e))?;
@@ -324,7 +336,7 @@ pub async fn apply_auto_tags(
     self_puuid: String,
     game_id: i64,
     tags: Vec<crate::auto_tag::AutoTagResult>,
-    names: std::collections::HashMap<String, (String, i32)>, // puuid -> (name, champion_id)
+    names: std::collections::HashMap<String, (String, i32, String)>, // puuid -> (name, champion_id, relation)
 ) -> usize {
     with_db(state, move |conn| {
         if tags.is_empty() {
@@ -338,21 +350,22 @@ pub async fn apply_auto_tags(
             if t.puuid.is_empty() || t.puuid == self_puuid {
                 continue;
             }
-            let (summoner_name, champion_id) = names
+            let (summoner_name, champion_id, relation) = names
                 .get(&t.puuid)
                 .cloned()
-                .unwrap_or_else(|| (String::new(), 0));
+                .unwrap_or_else(|| (String::new(), 0, String::new()));
 
             // 确保有行
             let _ = tx.execute(
-                "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, update_at, last_met_at, champion_id)
-                 VALUES (?1, ?2, '', '', NULL, ?3, 0, ?4, ?4, ?5)
+                "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, update_at, last_met_at, champion_id, last_relation)
+                 VALUES (?1, ?2, '', '', NULL, ?3, 0, ?4, ?4, ?5, ?6)
                  ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
                    summoner_name = CASE WHEN excluded.summoner_name = '' THEN saved_players.summoner_name ELSE excluded.summoner_name END,
                    champion_id = CASE WHEN excluded.champion_id = 0 THEN saved_players.champion_id ELSE excluded.champion_id END,
+                   last_relation = CASE WHEN excluded.last_relation = '' THEN saved_players.last_relation ELSE excluded.last_relation END,
                    update_at = excluded.update_at,
                    last_met_at = excluded.last_met_at",
-                params![t.puuid, self_puuid, summoner_name, ts, champion_id],
+                params![t.puuid, self_puuid, summoner_name, ts, champion_id, relation],
             );
 
             // 读取并更新历史标签统计
@@ -510,7 +523,7 @@ pub async fn query_all_saved_players(
     .await
 }
 
-/// 保存玩家的精简标记（对局信息页徽章用）
+/// 保存玩家的精简标记（对局信息页徽章 / 选人雷达用）
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SavedPlayerMarker {
@@ -519,6 +532,12 @@ pub struct SavedPlayerMarker {
     /// 最近自动标签（大腿/坑等）
     #[serde(default)]
     pub auto_tag: Option<String>,
+    /// 最近一次同局关系
+    #[serde(default)]
+    pub last_relation: Option<String>,
+    /// 最近相遇时间戳 ms
+    #[serde(default)]
+    pub last_met_at: Option<i64>,
 }
 
 /// 获取全部保存玩家的精简映射：puuid → 标记信息（tag + 相遇次数）
@@ -527,17 +546,26 @@ pub async fn get_saved_players_map(
     app_state: tauri::State<'_, AppState>,
     self_puuid: String,
 ) -> Result<HashMap<String, SavedPlayerMarker>, String> {
+    Ok(query_saved_players_map(app_state.inner(), self_puuid).await)
+}
+
+pub async fn query_saved_players_map(
+    app_state: &AppState,
+    self_puuid: String,
+) -> HashMap<String, SavedPlayerMarker> {
     if self_puuid.is_empty() {
-        return Ok(HashMap::new());
+        return HashMap::new();
     }
-    with_db(app_state.inner(), move |conn| {
+    with_db(app_state, move |conn| {
         let mut stmt = conn
             .prepare(
                 "SELECT sp.puuid,
                         sp.tag,
                         (SELECT COUNT(*) FROM encountered_games eg
                          WHERE eg.puuid = sp.puuid AND eg.self_puuid = sp.self_puuid),
-                        sp.auto_tag
+                        sp.auto_tag,
+                        sp.last_relation,
+                        sp.last_met_at
                  FROM saved_players sp
                  WHERE sp.self_puuid = ?1
                    AND ((sp.tag IS NOT NULL AND sp.tag != '') OR (sp.auto_tag IS NOT NULL AND sp.auto_tag != ''))",
@@ -552,6 +580,8 @@ pub async fn get_saved_players_map(
                         tag: r.get(1)?,
                         encounter_count: r.get::<_, i32>(2).unwrap_or(1),
                         auto_tag: r.get(3).ok().flatten(),
+                        last_relation: r.get(4).ok().flatten(),
+                        last_met_at: r.get(5).ok().flatten(),
                     },
                 ))
             })
@@ -563,6 +593,10 @@ pub async fn get_saved_players_map(
         Ok(map)
     })
     .await
+    .unwrap_or_else(|e| {
+        log::error!("查询已标记玩家映射失败: {}", e);
+        HashMap::new()
+    })
 }
 
 /// 分页查询与某玩家的相遇对局记录（按时间倒序）

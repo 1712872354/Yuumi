@@ -236,6 +236,30 @@ onMounted(async () => {
     }
   });
 
+  // 对局雷达：选人阶段发现已知（已标记）队友
+  await listen<{
+    players: Array<{
+      name: string;
+      tag: string;
+      autoTag?: string | null;
+      manualTag?: string | null;
+      relation?: string | null;
+    }>;
+  }>("radar-alert", (event) => {
+    const players = event.payload?.players || [];
+    if (!players.length) return;
+    for (const p of players.slice(0, 3)) {
+      const isGood = p.autoTag === "大腿" || p.autoTag === "C位";
+      const icon = isGood ? "✓" : p.autoTag === "坑" || p.autoTag === "演员" ? "⚠" : "📌";
+      const rel = p.relation === "enemy" ? "曾对手" : p.relation === "ally" ? "曾同队" : "";
+      const parts = [p.tag, rel].filter(Boolean).join(" · ");
+      showToast(`${icon} 雷达 ${p.name}：${parts || "已标记"}`, isGood ? "success" : "warning");
+    }
+    if (players.length > 3) {
+      showToast(`…另有 ${players.length - 3} 名已知玩家`, "info");
+    }
+  });
+
   // 自动启动 LOL 客户端并按需显示主窗口
   try {
     appConfig.value = await fetchConfig();

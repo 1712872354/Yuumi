@@ -249,6 +249,12 @@ const cardTags = computed(() => {
         cls: isGood ? "tag-auto-good" : "tag-auto-bad",
       });
     }
+    // 上次关系
+    if (marker.lastRelation === "ally") {
+      tags.push({ text: "曾同队", cls: "tag-rel-ally" });
+    } else if (marker.lastRelation === "enemy") {
+      tags.push({ text: "曾对手", cls: "tag-rel-enemy" });
+    }
   }
   if (data.fateFlag === "ally") {
     tags.push({ text: t("gameInfo.tagFateAlly"), cls: "tag-fate-ally" });
@@ -840,6 +846,14 @@ function copyGameId(e: MouseEvent, gameId: number) {
   color: #b91c1c;
   font-weight: 800;
   box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.3);
+}
+.tag-rel-ally {
+  background: rgba(59, 130, 246, 0.12);
+  color: var(--tier-blue, #3b82f6);
+}
+.tag-rel-enemy {
+  background: rgba(244, 63, 94, 0.1);
+  color: #e11d48;
 }
 
 /* ─── 战绩 ─── */

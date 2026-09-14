@@ -588,6 +588,9 @@ export interface SavedPlayerMarker {
   tag: string | null;
   encounterCount: number;
   autoTag?: string | null;
+  /** ally / enemy */
+  lastRelation?: string | null;
+  lastMetAt?: number | null;
 }
 
 export interface SaveSavedPlayerInput {

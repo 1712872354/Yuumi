@@ -277,6 +277,11 @@ async fn handle_phase_change(
         spawn_tag_reminder(app_handle.clone());
     }
 
+    // 选人阶段 → 对局雷达：提示已知（有标签）玩家
+    if phase == "ChampSelect" {
+        spawn_radar_check(app_handle.clone());
+    }
+
     // 状态转换检测 → 上传队列（包含延迟 2 秒 + 去重）
     upload_trigger.on_phase_change(phase, app_handle).await;
 }
@@ -787,9 +792,18 @@ fn spawn_cache_current_game(app_handle: AppHandle) {
             return;
         }
 
-        let mut targets: Vec<(i64, i32, String)> = Vec::new();
-        for team in ["teamOne", "teamTwo"] {
-            let Some(arr) = game_data.get(team).and_then(|v| v.as_array()) else {
+        // 自己的 summonerId，用于区分队友/对手
+        let self_summoner_id =
+            lcu_request(app_state, "GET", "/lol-summoner/v1/current-summoner", None)
+                .await
+                .ok()
+                .and_then(|v| v.get("summonerId").and_then(|s| s.as_i64()))
+                .unwrap_or(0);
+
+        // (summoner_id, champion_id, fallback_name, relation)
+        let mut targets: Vec<(i64, i32, String, String)> = Vec::new();
+        for (team_idx, team) in ["teamOne", "teamTwo"].iter().enumerate() {
+            let Some(arr) = game_data.get(*team).and_then(|v| v.as_array()) else {
                 continue;
             };
             for player in arr {
@@ -806,7 +820,23 @@ fn spawn_cache_current_game(app_handle: AppHandle) {
                     .get("championId")
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0) as i32;
-                targets.push((summoner_id, champion_id, fallback_name));
+                // teamOne 通常为我方；若拿到 self_summoner_id 则以本人所在队为准
+                let is_my_team = if self_summoner_id > 0 {
+                    // 同队成员里若有自己，则该队为 ally
+                    arr.iter().any(|p| {
+                        p.get("summonerId").and_then(|v| v.as_i64()) == Some(self_summoner_id)
+                    })
+                } else {
+                    team_idx == 0
+                };
+                let relation = if summoner_id == self_summoner_id {
+                    String::new()
+                } else if is_my_team {
+                    "ally".to_string()
+                } else {
+                    "enemy".to_string()
+                };
+                targets.push((summoner_id, champion_id, fallback_name, relation));
             }
         }
 
@@ -814,51 +844,54 @@ fn spawn_cache_current_game(app_handle: AppHandle) {
         use futures_util::StreamExt;
         let entries: Vec<crate::saved_players::GamePlayerEntry> =
             futures_util::stream::iter(targets)
-                .map(|(summoner_id, champion_id, fallback_name)| async move {
-                    let info = fetch_summoner_info(app_state, summoner_id, "").await;
-                    let info_obj = info.as_ref();
-                    // 国服 Riot ID 体系下 displayName 常为空字符串，需先过滤再取 gameName，
-                    // 都为空时回退到选人会话内的 summonerName
-                    let summoner_name = info_obj
-                        .and_then(|i| i.get("displayName"))
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| {
-                            info_obj
-                                .and_then(|i| i.get("gameName"))
-                                .and_then(|v| v.as_str())
-                                .filter(|s| !s.is_empty())
+                .map(
+                    |(summoner_id, champion_id, fallback_name, relation)| async move {
+                        let info = fetch_summoner_info(app_state, summoner_id, "").await;
+                        let info_obj = info.as_ref();
+                        // 国服 Riot ID 体系下 displayName 常为空字符串，需先过滤再取 gameName，
+                        // 都为空时回退到选人会话内的 summonerName
+                        let summoner_name = info_obj
+                            .and_then(|i| i.get("displayName"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .or_else(|| {
+                                info_obj
+                                    .and_then(|i| i.get("gameName"))
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                            })
+                            .or(if fallback_name.is_empty() {
+                                None
+                            } else {
+                                Some(fallback_name.as_str())
+                            })
+                            .unwrap_or("")
+                            .to_string();
+                        let puuid = info_obj
+                            .and_then(|i| i.get("puuid"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or("")
+                            .to_string();
+                        let profile_icon_id = info_obj
+                            .and_then(|i| i.get("profileIconId"))
+                            .and_then(|v| v.as_i64())
+                            .filter(|n| *n > 0)
+                            .unwrap_or(0) as i32;
+                        let tag_line = info_obj
+                            .and_then(|i| i.get("tagLine"))
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        Some(crate::saved_players::GamePlayerEntry {
+                            puuid,
+                            summoner_name,
+                            profile_icon_id,
+                            tag_line,
+                            champion_id,
+                            relation,
                         })
-                        .or(if fallback_name.is_empty() {
-                            None
-                        } else {
-                            Some(fallback_name.as_str())
-                        })
-                        .unwrap_or("")
-                        .to_string();
-                    let puuid = info_obj
-                        .and_then(|i| i.get("puuid"))
-                        .and_then(|v| v.as_str())
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("")
-                        .to_string();
-                    let profile_icon_id = info_obj
-                        .and_then(|i| i.get("profileIconId"))
-                        .and_then(|v| v.as_i64())
-                        .filter(|n| *n > 0)
-                        .unwrap_or(0) as i32;
-                    let tag_line = info_obj
-                        .and_then(|i| i.get("tagLine"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    Some(crate::saved_players::GamePlayerEntry {
-                        puuid,
-                        summoner_name,
-                        profile_icon_id,
-                        tag_line,
-                        champion_id,
-                    })
-                })
+                    },
+                )
                 .buffer_unordered(10)
                 .filter_map(|x| async move { x })
                 .collect()
@@ -976,21 +1009,28 @@ async fn spawn_auto_player_tag(app_handle: AppHandle, self_puuid: String, game_i
             return;
         }
 
-        // 收集名字/英雄用于 upsert
+        // 收集名字/英雄/关系用于 upsert
+        let self_team = players
+            .iter()
+            .find(|p| p.puuid == self_puuid)
+            .map(|p| p.team_id)
+            .unwrap_or(0);
         let mut names = std::collections::HashMap::new();
-        if let Some(participants) = game_json.get("participants").and_then(|v| v.as_array()) {
-            for p in participants {
-                let Some(puuid) = p.get("puuid").and_then(|v| v.as_str()) else {
-                    continue;
-                };
-                let name = p
-                    .get("summonerName")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-                    .unwrap_or_default();
-                let champ = p.get("championId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                names.insert(puuid.to_string(), (name, champ));
+        for p in &players {
+            if p.puuid.is_empty() || p.puuid == self_puuid {
+                continue;
             }
+            let relation = if self_team != 0 && p.team_id == self_team {
+                "ally"
+            } else if self_team != 0 {
+                "enemy"
+            } else {
+                ""
+            };
+            names.insert(
+                p.puuid.clone(),
+                (String::new(), p.champion_id, relation.to_string()),
+            );
         }
 
         let applied = crate::saved_players::apply_auto_tags(
@@ -1064,6 +1104,100 @@ async fn fetch_match_json_by_id(
     }
     // 找不到精确 gameId 时取最近一局（结算后 history 可能尚未带最新 id）
     games.first().map(|g| g.get("json").unwrap_or(g).clone())
+}
+
+/// 选人阶段对局雷达：检查我方是否出现已标记/自动标签玩家，向前端推送 toast
+fn spawn_radar_check(app_handle: AppHandle) {
+    crate::spawn_log_panic(async move {
+        // 选人数据稍等一会再拉
+        sleep(Duration::from_millis(1200)).await;
+
+        let state = app_handle.state::<crate::AppState>();
+        let app_state = state.inner();
+
+        let self_puuid = get_self_puuid(app_state).await;
+        if self_puuid.is_empty() {
+            return;
+        }
+
+        let session =
+            match lcu_request(app_state, "GET", "/lol-champ-select/v1/session", None).await {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+
+        let Some(my_team) = session.get("myTeam").and_then(|v| v.as_array()) else {
+            return;
+        };
+
+        let mut known_puuids: Vec<String> = Vec::new();
+        let mut known_names: std::collections::HashMap<String, String> = Default::default();
+        for p in my_team {
+            let Some(puuid) = p.get("puuid").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if puuid.is_empty() || puuid == self_puuid {
+                continue;
+            }
+            known_puuids.push(puuid.to_string());
+            if let Some(n) = p
+                .get("gameName")
+                .or_else(|| p.get("displayName"))
+                .or_else(|| p.get("summonerName"))
+                .and_then(|v| v.as_str())
+            {
+                known_names.insert(puuid.to_string(), n.to_string());
+            }
+        }
+        if known_puuids.is_empty() {
+            return;
+        }
+
+        let markers = match crate::saved_players::get_saved_players_map(
+            app_handle.state::<crate::AppState>(),
+            self_puuid,
+        )
+        .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("对局雷达：读取已标记玩家失败: {}", e);
+                return;
+            }
+        };
+
+        let mut alerts = Vec::new();
+        for puuid in known_puuids {
+            let Some(m) = markers.get(&puuid) else {
+                continue;
+            };
+            let label = m
+                .auto_tag
+                .clone()
+                .or_else(|| m.tag.clone())
+                .unwrap_or_else(|| "已标记".to_string());
+            let name = known_names
+                .get(&puuid)
+                .cloned()
+                .unwrap_or_else(|| puuid.chars().take(8).collect());
+            alerts.push(serde_json::json!({
+                "puuid": puuid,
+                "name": name,
+                "tag": label,
+                "autoTag": m.auto_tag,
+                "manualTag": m.tag,
+                "relation": m.last_relation,
+                "encounterCount": m.encounter_count,
+            }));
+        }
+
+        if alerts.is_empty() {
+            return;
+        }
+
+        log::info!("对局雷达：发现 {} 名已知玩家", alerts.len());
+        let _ = app_handle.emit("radar-alert", serde_json::json!({ "players": alerts }));
+    });
 }
 
 /// 选人阶段对带标记的玩家发送聊天提醒
