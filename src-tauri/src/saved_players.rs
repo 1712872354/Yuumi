@@ -219,8 +219,8 @@ fn row_to_encountered(row: &rusqlite::Row<'_>) -> rusqlite::Result<EncounteredGa
 
 // ─── 对局结束自动记录相遇 ───
 
-/// 记录对局相遇：批量 upsert saved_player（更新 lastMetAt）+ 插入 encountered_games。
-/// 全部玩家在单个 SQLite 事务中处理，由 with_db 调度到阻塞线程，避免同步 I/O 占用 tokio 工作线程。
+/// 记录对局相遇：仅更新库中**已存在**玩家的 lastMetAt / 身份信息，并写入 encountered_games。
+/// 不再为每局 10 人批量建行——新玩家只有手动标记或自动打标时才入库，避免库膨胀。
 pub async fn record_encounters(
     state: &AppState,
     players: Vec<GamePlayerEntry>,
@@ -238,39 +238,32 @@ pub async fn record_encounters(
                 continue;
             }
 
-            // 主键含 region/rso_platform_id，若该玩家已存在则复用其值，
-            // 否则用 '' 作为新的占位，避免同一玩家因 region 不一致产生重复行
-            let (region, rso_platform_id): (String, String) = tx
-                .query_row(
-                    "SELECT region, rso_platform_id FROM saved_players WHERE puuid = ?1 AND self_puuid = ?2",
-                    params![player.puuid, self_puuid],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+            // 仅更新已存在的行；不存在则跳过（不 INSERT）
+            let updated = tx
+                .execute(
+                    "UPDATE saved_players SET
+                       summoner_name = CASE WHEN ?1 = '' THEN summoner_name ELSE ?1 END,
+                       profile_icon_id = CASE WHEN ?2 = 0 THEN profile_icon_id ELSE ?2 END,
+                       tag_line = CASE WHEN ?3 IS NULL OR ?3 = '' THEN tag_line ELSE ?3 END,
+                       champion_id = CASE WHEN ?4 = 0 THEN champion_id ELSE ?4 END,
+                       update_at = ?5,
+                       last_met_at = ?5
+                     WHERE puuid = ?6 AND self_puuid = ?7",
+                    params![
+                        player.summoner_name,
+                        player.profile_icon_id,
+                        player.tag_line,
+                        player.champion_id,
+                        ts,
+                        player.puuid,
+                        self_puuid
+                    ],
                 )
-                .unwrap_or((String::new(), String::new()));
+                .map_err(|e| format!("更新已记录玩家失败: {}", e))?;
 
-            tx.execute(
-                "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at)
-                 VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9, ?9)
-                 ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
-                   summoner_name = CASE WHEN excluded.summoner_name = '' THEN saved_players.summoner_name ELSE excluded.summoner_name END,
-                   profile_icon_id = CASE WHEN excluded.profile_icon_id = 0 THEN saved_players.profile_icon_id ELSE excluded.profile_icon_id END,
-                   tag_line = CASE WHEN excluded.tag_line IS NULL OR excluded.tag_line = '' THEN saved_players.tag_line ELSE excluded.tag_line END,
-                   champion_id = CASE WHEN excluded.champion_id = 0 THEN saved_players.champion_id ELSE excluded.champion_id END,
-                   update_at = excluded.update_at,
-                   last_met_at = excluded.last_met_at",
-                params![
-                    player.puuid,
-                    self_puuid,
-                    region,
-                    rso_platform_id,
-                    player.summoner_name,
-                    player.profile_icon_id,
-                    player.tag_line,
-                    player.champion_id,
-                    ts
-                ],
-            )
-            .map_err(|e| format!("记录相遇玩家失败: {}", e))?;
+            if updated == 0 {
+                continue;
+            }
 
             tx.execute(
                 "INSERT INTO encountered_games (game_id, puuid, self_puuid, region, rso_platform_id, queue_type, update_at)
@@ -424,6 +417,8 @@ pub struct SaveSavedPlayerInput {
     pub profile_icon_id: i32,
     #[serde(default)]
     pub encountered: bool,
+    #[serde(default)]
+    pub champion_id: i32,
 }
 
 /// 保存/更新玩家记录（upsert）。tag 为 None 时保留已有 tag，Some 时覆盖。
@@ -437,11 +432,12 @@ pub async fn save_saved_player(
         let last_met = if dto.encountered { Some(ts) } else { None };
         conn.execute(
             "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, 0, ?8, ?9)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?10, ?8, ?9)
              ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
                tag = CASE WHEN excluded.tag IS NULL THEN saved_players.tag ELSE excluded.tag END,
                summoner_name = CASE WHEN excluded.summoner_name = '' THEN saved_players.summoner_name ELSE excluded.summoner_name END,
                profile_icon_id = CASE WHEN excluded.profile_icon_id = 0 THEN saved_players.profile_icon_id ELSE excluded.profile_icon_id END,
+               champion_id = CASE WHEN excluded.champion_id = 0 THEN saved_players.champion_id ELSE excluded.champion_id END,
                update_at = excluded.update_at,
                last_met_at = COALESCE(excluded.last_met_at, saved_players.last_met_at)",
             params![
@@ -454,6 +450,7 @@ pub async fn save_saved_player(
                 dto.profile_icon_id,
                 ts,
                 last_met,
+                dto.champion_id,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -475,7 +472,9 @@ pub async fn query_all_saved_players(
     let page = page.unwrap_or(1).max(1);
     let page_size = page_size.unwrap_or(50).clamp(1, 200);
     let where_clause = match filter.as_deref() {
-        Some("tagged") => " AND tag IS NOT NULL AND tag != ''",
+        Some("tagged") => {
+            " AND ((tag IS NOT NULL AND tag != '') OR (auto_tag IS NOT NULL AND auto_tag != ''))"
+        }
         Some("multiple") => " AND (SELECT COUNT(*) FROM encountered_games eg WHERE eg.puuid = saved_players.puuid AND eg.self_puuid = saved_players.self_puuid) >= 2",
         _ => "",
     }
@@ -539,7 +538,9 @@ pub async fn get_saved_players_map(
                         (SELECT COUNT(*) FROM encountered_games eg
                          WHERE eg.puuid = sp.puuid AND eg.self_puuid = sp.self_puuid),
                         sp.auto_tag
-                 FROM saved_players sp WHERE sp.self_puuid = ?1",
+                 FROM saved_players sp
+                 WHERE sp.self_puuid = ?1
+                   AND ((sp.tag IS NOT NULL AND sp.tag != '') OR (sp.auto_tag IS NOT NULL AND sp.auto_tag != ''))",
             )
             .map_err(|e| e.to_string())?;
         let mut map = HashMap::new();

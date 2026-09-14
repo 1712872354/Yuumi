@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { inject, type Ref } from "vue";
+import { inject, ref, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 import LcuImage from "../LcuImage.vue";
 import type { GameDetail } from "../../types/search";
 import { getQueueName } from "../../utils/queueName";
+import { saveSavedPlayer } from "../../api/lcu";
+import { useToast } from "../../composables/useToast";
 
 defineProps<{
   details: GameDetail | null;
@@ -19,11 +21,61 @@ const emit = defineEmits<{
 }>();
 
 const { t, te } = useI18n();
+const { showToast } = useToast();
 
 const navigateCareerPayload = inject<
   Ref<{ puuid: string } | null>
 >("navigateCareerPayload");
 const navigateTo = inject<(page: string) => void>("navigateTo");
+
+// 手动标记
+const taggingPlayer = ref<{
+  puuid: string;
+  name: string;
+  championId: number;
+} | null>(null);
+const tagInput = ref("");
+const tagging = ref(false);
+
+function openTagDialog(p: {
+  puuid: string;
+  name: string;
+  summonerId?: number;
+  championId?: number;
+}, myPuuid?: string) {
+  if (!p.puuid || p.puuid === "00000000-0000-0000-0000-000000000000") return;
+  if (myPuuid && p.puuid === myPuuid) return;
+  taggingPlayer.value = {
+    puuid: p.puuid,
+    name: p.name,
+    championId: p.championId || 0,
+  };
+  tagInput.value = "";
+}
+
+async function confirmTag(myPuuid?: string) {
+  if (!taggingPlayer.value || !myPuuid) return;
+  const tag = tagInput.value.trim();
+  if (!tag) return;
+  tagging.value = true;
+  try {
+    await saveSavedPlayer({
+      puuid: taggingPlayer.value.puuid,
+      selfPuuid: myPuuid,
+      tag,
+      summonerName: taggingPlayer.value.name,
+      championId: taggingPlayer.value.championId,
+      encountered: true,
+    });
+    showToast(t("savedPlayersPage.tagSaveSuccess", "已标记"), "success");
+    taggingPlayer.value = null;
+  } catch (e) {
+    console.error("[MatchDetail] 标记失败:", e);
+    showToast(t("savedPlayersPage.tagSaveFailed", "标记失败"), "error");
+  } finally {
+    tagging.value = false;
+  }
+}
 
 function handlePlayerClick(p: { puuid: string; summonerId: number; name: string }) {
   if (p.puuid && p.puuid !== "00000000-0000-0000-0000-000000000000") {
@@ -224,6 +276,17 @@ function queueName(queueId: number, backendName: string): string {
                 >
                   {{ participantRanks[p.puuid] }}
                 </span>
+                <button
+                  v-if="p.puuid && p.puuid !== '00000000-0000-0000-0000-000000000000' && p.puuid !== myPuuid"
+                  class="row-tag-btn"
+                  :title="$t('savedPlayersPage.tagEdit', '标记')"
+                  @click.stop="openTagDialog(p, myPuuid)"
+                >
+                  <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+                    <line x1="7" y1="7" x2="7.01" y2="7" />
+                  </svg>
+                </button>
               </div>
 
               <div class="player-spacer"></div>
@@ -299,6 +362,34 @@ function queueName(queueId: number, backendName: string): string {
     </div>
 
     <div v-if="!details && !loading" class="detail-empty"></div>
+
+    <!-- 手动标记弹层 -->
+    <div v-if="taggingPlayer" class="tag-modal-mask" @click.self="taggingPlayer = null">
+      <div class="tag-modal">
+        <div class="tag-modal-title">
+          {{ $t("savedPlayersPage.tagEdit", "标记") }} {{ taggingPlayer.name }}
+        </div>
+        <input
+          v-model="tagInput"
+          class="tag-modal-input"
+          :placeholder="$t('savedPlayersPage.tagPlaceholder', '输入标记，如：大腿 / 坑 / 演员')"
+          maxlength="40"
+          @keyup.enter="confirmTag(myPuuid)"
+        />
+        <div class="tag-modal-actions">
+          <button class="tag-modal-btn ghost" @click="taggingPlayer = null">
+            {{ $t("savedPlayersPage.tagCancel", "取消") }}
+          </button>
+          <button
+            class="tag-modal-btn primary"
+            :disabled="!tagInput.trim() || tagging"
+            @click="confirmTag(myPuuid)"
+          >
+            {{ $t("savedPlayersPage.tagSave", "保存") }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -880,5 +971,95 @@ function queueName(queueId: number, backendName: string): string {
 .header-damage {
   width: 60px;
   text-align: right;
+}
+
+/* 手动标记 */
+.row-tag-btn {
+  margin-left: 4px;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-dimmed, #9ca3af);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.player-row:hover .row-tag-btn {
+  opacity: 1;
+}
+.row-tag-btn:hover {
+  background: var(--primary-color-alpha-15);
+  color: var(--primary-color);
+}
+
+.tag-modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tag-modal {
+  width: 320px;
+  padding: 16px;
+  border-radius: 10px;
+  background: var(--card-bg, #fff);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.tag-modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.tag-modal-input {
+  height: 36px;
+  padding: 0 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-color);
+  font-size: 13px;
+  outline: none;
+}
+.tag-modal-input:focus {
+  border-color: var(--primary-color);
+}
+.tag-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.tag-modal-btn {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: none;
+  font-size: 13px;
+  cursor: pointer;
+}
+.tag-modal-btn.ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+.tag-modal-btn.primary {
+  background: var(--primary-color);
+  color: #fff;
+  font-weight: 600;
+}
+.tag-modal-btn.primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 </style>

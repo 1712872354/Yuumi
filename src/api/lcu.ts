@@ -599,6 +599,7 @@ export interface SaveSavedPlayerInput {
   summonerName?: string;
   profileIconId?: number;
   encountered?: boolean;
+  championId?: number;
 }
 
 /** 分页查询保存的玩家，filter: "tagged" | "multiple" | undefined */

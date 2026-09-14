@@ -30,7 +30,7 @@ const players = ref<SavedPlayer[]>([]);
 const total = ref(0);
 const page = ref(1);
 const pageSize = 50;
-const filter = ref<"tagged" | "multiple" | "all">("all");
+const filter = ref<"tagged" | "multiple" | "all">("tagged");
 const selfPuuid = ref("");
 const expandedPuuid = ref<string | null>(null);
 const encounteredGames = ref<EncounteredGame[]>([]);
@@ -297,13 +297,6 @@ watch(isConnected, (connected) => {
           <div class="filter-group">
             <button
               class="filter-btn"
-              :class="{ active: filter === 'all' }"
-              @click="switchFilter('all')"
-            >
-              {{ $t("savedPlayersPage.filterAll") }}
-            </button>
-            <button
-              class="filter-btn"
               :class="{ active: filter === 'tagged' }"
               @click="switchFilter('tagged')"
             >
@@ -315,6 +308,13 @@ watch(isConnected, (connected) => {
               @click="switchFilter('multiple')"
             >
               {{ $t("savedPlayersPage.filterMultiple") }}
+            </button>
+            <button
+              class="filter-btn"
+              :class="{ active: filter === 'all' }"
+              @click="switchFilter('all')"
+            >
+              {{ $t("savedPlayersPage.filterAll") }}
             </button>
           </div>
           <button class="action-btn" @click="handleImport">
