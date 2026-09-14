@@ -317,20 +317,19 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
   margin: 0;
 }
 
-/* ─── 双队看板 ─── */
+/* ─── 双队看板：按内容撑高，整页滚动，避免压缩叠层 ─── */
 .teams-board {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-height: 0;
-  flex: 1;
+  gap: 16px;
+  /* 不 flex:1，不 min-height:0，让高度由内容决定 */
 }
 
 .team-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  min-height: 0;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .team-header {
@@ -338,6 +337,7 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
+  flex-wrap: wrap;
 }
 
 .team-dot {
@@ -413,17 +413,22 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
   font-weight: 700;
 }
 
-/* ─── 5 列卡片网格 ─── */
+/* ─── 卡片网格：固定最小行高，列数随宽度自适应，不叠层 ─── */
 .team-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
-  /* 固定卡片高度，战绩区在卡内滚动 */
-  grid-auto-rows: 380px;
+  /* 行高有下限，卡片内部战绩区自己滚动 */
+  grid-auto-rows: minmax(340px, 380px);
+  align-items: stretch;
 }
 
-/* 窄窗口时自动 3 列 / 2 列 */
-@media (max-width: 1400px) {
+@media (max-width: 1500px) {
+  .team-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1200px) {
   .team-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -431,6 +436,11 @@ function getPremadeSize(p: PremadePlayerLike, team: PremadePlayerLike[], side: "
 @media (max-width: 900px) {
   .team-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 600px) {
+  .team-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
