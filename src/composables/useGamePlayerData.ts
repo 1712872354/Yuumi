@@ -9,11 +9,7 @@ import {
   fetchConfig,
   type AppConfig,
 } from "../api/lcu";
-import type {
-  PremadePlayerLike,
-  ChampSelectSessionLike,
-} from "../types/gameInfo";
-import { resolvePlayerChampionId } from "../types/gameInfo";
+import type { PremadePlayerLike } from "../types/gameInfo";
 import { computePremadeColors } from "./usePremadeGroup";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
 import { fetchPlayerMastery } from "./playerMastery";
@@ -29,6 +25,13 @@ import {
 } from "./gameflowSessionCache";
 import { createLoadPlayerData } from "./playerDetailLoader";
 import { createGameflowTeamPipeline } from "./gameflowTeamPipeline";
+import {
+  buildTeamSig as teamSig,
+  flagBots,
+  isCustomChampSelectSession,
+  mergeChampSelectSnapshot,
+  remapTheirSnapshotForCustom,
+} from "./champSelectSnapshot";
 
 // 向后兼容 re-export（GameInfo.vue 等外部引用路径保持不变）
 export { fetchPlayerMastery } from "./playerMastery";
@@ -502,15 +505,8 @@ export function useGamePlayerData(
     },
   );
 
-  // 团队内容签名：成员 cellId + 英雄 ID（包含锁定、预选及 actions 挑选）。session 高频事件中仅倒计时变化时签名不变，跳过无效重载
+  // 团队内容签名：成员 cellId + 英雄 ID。session 高频事件中仅倒计时变化时签名不变，跳过无效重载
   let lastSessionTeamSig = "";
-  const teamSig = (team: ChampSelectPlayer[], session?: ChampSelectSessionLike | null) =>
-    (team || [])
-      .map((p) => {
-        const champId = resolvePlayerChampionId(p, session);
-        return `${p.cellId}:${champId}:${p.puuid || ""}`;
-      })
-      .join(",");
 
   watch(
     () => store.champSelectSession,
@@ -521,59 +517,33 @@ export function useGamePlayerData(
 
         // 队伍归属以 LCU 原生语义为准：myTeam（含自定义人机 isHumanoid）= 我方，
         // theirTeam = 敌方。人机仅标记为 bot（下游走本地占位，不请求 LCU 战绩接口），不改变归属。
-        const flagBots = (list: ChampSelectPlayer[]): ChampSelectPlayer[] =>
-          list.map((p) =>
-            p.isHumanoid && !p.bot && !p.isBot ? { ...p, bot: true, isBot: true } : p,
-          );
-        // 自定义会话（敌方 cell 可能与我方共用编号空间）：敌方快照需重映射到 5+ 稳定区间隔离
-        const isCustomSession =
-          session.isCustomGame === true ||
-          rawMyTeam.some((p) => p.isHumanoid) ||
-          rawTheirTeam.some((p) => p.isHumanoid);
+        const isCustomSession = isCustomChampSelectSession(
+          session,
+          rawMyTeam,
+          rawTheirTeam,
+        );
         const myTeam = flagBots(rawMyTeam);
         const theirTeamPlayers = flagBots(rawTheirTeam);
-        const sig = teamSig(myTeam, session) + "|" + teamSig(theirTeamPlayers, session);
+        const sig =
+          teamSig(myTeam, session) + "|" + teamSig(theirTeamPlayers, session);
         if (sig === lastSessionTeamSig) return;
         lastSessionTeamSig = sig;
 
-        // 增量更新选人阶段双方队员与已锁定英雄快照（若之前已有有效 championId，避免被过渡帧冲为 0）
-        const mergeSnapshot = (
-          newPlayers: ChampSelectPlayer[],
-          prevSnapshot: PremadePlayerLike[],
-        ): PremadePlayerLike[] => {
-          return newPlayers.map((p) => {
-            const detectedChampId = resolvePlayerChampionId(p, session);
-            const prev = prevSnapshot.find(
-              (old) =>
-                (p.puuid && old.puuid === p.puuid) ||
-                (p.summonerId && old.summonerId === p.summonerId) ||
-                old.cellId === p.cellId,
-            );
-            const finalChampId =
-              detectedChampId > 0
-                ? detectedChampId
-                : prev?.championId && prev.championId > 0
-                  ? prev.championId
-                  : 0;
-            return {
-              ...p,
-              championId: finalChampId,
-            };
-          });
-        };
-
-        champSelectTeamSnapshot.value = mergeSnapshot(
+        // 增量更新选人阶段双方队员与已锁定英雄快照
+        champSelectTeamSnapshot.value = mergeChampSelectSnapshot(
           myTeam,
           champSelectTeamSnapshot.value,
+          session,
         );
-        // 增量合并敌方快照：自定义会话映射到 5+ 稳定区间；常规会话保持原 cellId 空间
-        const mergedTheir = mergeSnapshot(
+        const mergedTheir = mergeChampSelectSnapshot(
           theirTeamPlayers,
           champSelectTheirTeamSnapshot.value,
+          session,
         );
-        champSelectTheirTeamSnapshot.value = isCustomSession
-          ? mergedTheir.map((p, idx) => ({ ...p, cellId: 5 + idx }))
-          : mergedTheir;
+        champSelectTheirTeamSnapshot.value = remapTheirSnapshotForCustom(
+          mergedTheir,
+          isCustomSession,
+        );
 
         loading.value = false;
         error.value = "";

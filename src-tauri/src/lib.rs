@@ -142,9 +142,9 @@ pub fn run() {
     }
 
     let builder = tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
-            let _ = app.emit("single-instance", (argv, cwd));
-            if let Some(window) = app.get_webview_window("main") {
+        .plugin(tauri_plugin_single_instance::init(|_app, _argv, _cwd| {
+            // 前端无需监听 argv；插件回调内已负责唤起主窗口
+            if let Some(window) = _app.get_webview_window("main") {
                 let _ = window.unminimize();
                 let _ = window.show();
                 let _ = window.set_focus();

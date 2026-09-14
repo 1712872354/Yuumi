@@ -303,7 +303,8 @@ pub(super) async fn spawn_auto_player_tag(app_handle: AppHandle, self_puuid: Str
                 "count": applied,
                 "tags": tags.iter().map(|t| serde_json::json!({
                     "puuid": t.puuid,
-                    "tag": t.tag.as_str(),
+                    // 事件契约存稳定 key，与 DB / 前端 helper 对齐
+                    "tag": t.tag.as_key(),
                     "reason": t.reason,
                 })).collect::<Vec<_>>(),
             }),
