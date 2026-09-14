@@ -33,8 +33,6 @@ import {
   NEW_PLAYER_MAX_LEVEL,
   isIdentityCompatible,
   inheritPlaceholderChampion,
-  setPlayerDataAliases,
-  uniquePlayerEntries,
 } from "./identityUtils";
 import { clearReserveDataFromStorage } from "./reserveData";
 import {
@@ -89,10 +87,9 @@ export function useGamePlayerData(
   } = storeToRefs(gameInfo);
 
   function writeReserveData() {
-    // 同一玩家可能以 cellId/summonerId/puuid 三键写入同一对象，按引用去重再计数
-    const loadedCount = uniquePlayerEntries(playerData.value).filter(
-      (d) => d.info !== null,
-    ).length;
+    // 内部主键表已按 puuid/pending 去重，无需再 Set
+    const loadedCount = gameInfo.uniquePlayerList().filter((d) => d.info !== null)
+      .length;
     if (
       !shouldWriteReserveData({
         loadedCount,
@@ -105,7 +102,7 @@ export function useGamePlayerData(
       return;
     }
     writeReserveSnapshotToStorage({
-      playerData: playerData.value,
+      playerData: gameInfo.players,
       myTeam: gameflowMyTeam.value,
       theirTeam: gameflowTheirTeam.value,
       premadeColorsMy: premadeColorsMy.value,
@@ -119,8 +116,7 @@ export function useGamePlayerData(
   let isBackfillingMasteries = false;
   function backfillMissingMasteries() {
     if (isBackfillingMasteries) return;
-    // 按引用去重，避免多键别名导致同一玩家被重复 backfill
-    const entries = uniquePlayerEntries(playerData.value);
+    const entries = gameInfo.uniquePlayerList();
     const needBackfill = entries.filter(
       (e) =>
         e &&
@@ -174,7 +170,7 @@ export function useGamePlayerData(
         hasRestored = true;
       }
       if (snap.playerData) {
-        playerData.value = snap.playerData;
+        gameInfo.restorePlayers(snap.playerData);
         hasRestored = true;
         // 异步检查并补齐缺少熟练度的玩家（例如旧版本保留的数据）
         backfillMissingMasteries();
@@ -397,7 +393,7 @@ export function useGamePlayerData(
       return isIdentityCompatible(e, incoming);
     });
     if (reusable) {
-      setPlayerDataAliases(playerData.value, reusable, {
+      gameInfo.setPlayer(reusable, {
         cellId,
         summonerId: realSummonerId,
         puuid: playerPuuid,
@@ -468,7 +464,7 @@ export function useGamePlayerData(
         matchHistoryHidden: true,
         championId: fallbackPlayer.championId || fallbackPlayer.botChampionId || 0,
       };
-      setPlayerDataAliases(playerData.value, botDataObj, {
+      gameInfo.setPlayer(botDataObj, {
         cellId,
         summonerId: realSummonerId,
         puuid: playerPuuid,
@@ -477,14 +473,17 @@ export function useGamePlayerData(
       return;
     }
 
-    playerData.value[cellId] = {
-      info: null,
-      matches: [],
-      ranked: { solo: null, flex: null },
-      loading: true,
-      // 拉取窗口内保留英雄，避免加载中头像空白（仅继承无身份占位的）
-      championId: resolveCarryChampionId(fallbackPlayer, cellId),
-    };
+    gameInfo.setPlayer(
+      {
+        info: null,
+        matches: [],
+        ranked: { solo: null, flex: null },
+        loading: true,
+        // 拉取窗口内保留英雄，避免加载中头像空白（仅继承无身份占位的）
+        championId: resolveCarryChampionId(fallbackPlayer, cellId),
+      },
+      { cellId, summonerId: realSummonerId, puuid: playerPuuid },
+    );
 
     try {
       let info: SummonerDisplay | null = null;
@@ -564,14 +563,17 @@ export function useGamePlayerData(
           };
           matchHistoryHidden = true;
         } else {
-          playerData.value[cellId] = {
-            info: null,
-            matches: [],
-            ranked: { solo: null, flex: null },
-            loading: false,
-            // 拉取失败也保留所选英雄，只展示头像与隐藏标识，不留空白列
-            championId: resolveCarryChampionId(fallbackPlayer, cellId),
-          };
+          gameInfo.setPlayer(
+            {
+              info: null,
+              matches: [],
+              ranked: { solo: null, flex: null },
+              loading: false,
+              // 拉取失败也保留所选英雄，只展示头像与隐藏标识，不留空白列
+              championId: resolveCarryChampionId(fallbackPlayer, cellId),
+            },
+            { cellId, summonerId: realSummonerId, puuid: playerPuuid },
+          );
           return;
         }
       }
@@ -694,7 +696,7 @@ export function useGamePlayerData(
         masteries: masteryData,
         streak,
       };
-      setPlayerDataAliases(playerData.value, dataObj, {
+      gameInfo.setPlayer(dataObj, {
         cellId,
         summonerId,
         puuid: safeInfo.puuid || undefined,
@@ -714,7 +716,7 @@ export function useGamePlayerData(
         // 异常兜底也保留所选英雄，不留空白列
         championId: resolveCarryChampionId(fallbackPlayer, cellId),
       };
-      setPlayerDataAliases(playerData.value, dataObj, {
+      gameInfo.setPlayer(dataObj, {
         cellId,
         summonerId,
         puuid: playerPuuid,
@@ -917,7 +919,7 @@ export function useGamePlayerData(
         if (p.championId && p.championId > 0) {
           existing.championId = p.championId;
         }
-        setPlayerDataAliases(playerData.value, existing, {
+        gameInfo.setPlayer(existing, {
           cellId: key,
           summonerId: p.summonerId,
           puuid: p.puuid,
@@ -928,9 +930,9 @@ export function useGamePlayerData(
         if (!p.championId || p.championId <= 0) {
           p.championId = carryChampionFromStaleCell(byCell, key, p.championId);
         }
-        delete playerData.value[key];
+        gameInfo.deletePlayerByCell(key);
       }
-      if (!playerData.value[key]) {
+      if (!gameInfo.getPlayer({ cellId: key, summonerId: p.summonerId, puuid: p.puuid })) {
         const fallbackName =
           p.displayName ||
           p.gameName ||
@@ -958,19 +960,11 @@ export function useGamePlayerData(
           matchHistoryHidden: isBot,
           championId: p.championId,
         };
-        playerData.value[key] = placeholder;
-      }
-      if (p.summonerId && p.summonerId !== key && !playerData.value[p.summonerId]) {
-        const existingSid = playerData.value[key]?.info?.summonerId;
-        if (!existingSid || existingSid === p.summonerId || existingSid === key) {
-          playerData.value[p.summonerId] = playerData.value[key];
-        }
-      }
-      if (p.puuid && !playerData.value[p.puuid]) {
-        const existingPuuid = playerData.value[key]?.info?.puuid;
-        if (!existingPuuid || existingPuuid === p.puuid) {
-          playerData.value[p.puuid] = playerData.value[key];
-        }
+        gameInfo.setPlayer(placeholder, {
+          cellId: key,
+          summonerId: p.summonerId,
+          puuid: p.puuid,
+        });
       }
     }
   }
@@ -1029,7 +1023,7 @@ export function useGamePlayerData(
           (p.summonerId ? playerData.value[p.summonerId] : undefined) ||
           (p.puuid ? playerData.value[p.puuid] : undefined);
         if (sourceData) {
-          setPlayerDataAliases(playerData.value, sourceData, {
+          gameInfo.setPlayer(sourceData, {
             cellId: p.cellId,
             summonerId: p.summonerId,
             puuid: p.puuid,
@@ -1124,7 +1118,7 @@ export function useGamePlayerData(
     if (isTftMode.value) {
       gameflowMyTeam.value = [];
       gameflowTheirTeam.value = [];
-      playerData.value = {};
+      gameInfo.clearPlayers();
       premadeColorsMy.value = {};
       premadeColorsTheir.value = {};
       clearReserveDataFromStorage();
@@ -1298,7 +1292,7 @@ export function useGamePlayerData(
       if (store.gamePhase === "ChampSelect") {
         gameflowMyTeam.value = [];
         gameflowTheirTeam.value = [];
-        playerData.value = {};
+        gameInfo.clearPlayers();
       }
     }
   });
@@ -1313,7 +1307,7 @@ export function useGamePlayerData(
         currentGameId.value = null;
         gameflowMyTeam.value = [];
         gameflowTheirTeam.value = [];
-        playerData.value = {};
+        gameInfo.clearPlayers();
         premadeColorsMy.value = {};
         premadeColorsTheir.value = {};
         // 选人阶段不立即清空 localStorage，避免秒退导致已有完整对局丢失
