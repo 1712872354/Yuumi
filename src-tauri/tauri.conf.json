@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/nicklasoverworlds/tauri/refs/heads/dev/crates/tauri-config-schema/schema.json",
   "productName": "Yuumi",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "identifier": "com.yuumi.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
@@ -54,7 +54,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDgzQjk5RURCMTE1MTM5MEIKUldRTE9WRVIyNTY1Z3pVZWRIQzh1bythRWZ3bWJsdTdoeS9uUTEvL0ZBa3I1bXZEd1o3cWpRbTYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE3N0VEOTFCNkZENzdEMUMKUldRY2ZkZHZHOWwrcDQyM3RZaE1DNkhGcXR1SWJvR1Y3NGNLdkxscm1NTFg0bkc2dW5iQlVLanUK",
       "active": true,
       "endpoints": [
         "https://github.com/1712872354/Yuumi/releases/latest/download/latest.json",

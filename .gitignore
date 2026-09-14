@@ -41,3 +41,6 @@ reasonix.toml
 
 # local build artifacts
 data/
+
+# updater signing keys (never commit)
+.tauri-keys/
