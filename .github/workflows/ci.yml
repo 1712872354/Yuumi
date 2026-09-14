@@ -62,6 +62,9 @@ jobs:
       - name: Frontend lint (errors only)
         run: pnpm exec eslint src --ext .ts,.vue --quiet
 
+      - name: Frontend unit tests
+        run: pnpm test:unit
+
       - name: Frontend build
         run: pnpm exec vite build
 

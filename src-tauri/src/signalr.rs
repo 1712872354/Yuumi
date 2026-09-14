@@ -313,7 +313,11 @@ async fn negotiate(server_url: &str) -> Result<String, Box<dyn std::error::Error
     }
 
     let val: serde_json::Value = resp.json().await?;
-    log::debug!("[SignalR] 协商返回数据: {:?}", val);
+    // 不打印完整协商响应，避免 connectionToken 落入日志
+    log::debug!(
+        "[SignalR] 协商成功 hasToken={}",
+        val.get("connectionToken").is_some() || val.get("connectionId").is_some()
+    );
 
     let token = val
         .get("connectionToken")

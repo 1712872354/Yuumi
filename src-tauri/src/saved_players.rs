@@ -917,3 +917,133 @@ pub async fn import_tagged_players_from_json_file(
     })
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+
+    fn mem_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE saved_players (
+                puuid TEXT NOT NULL,
+                self_puuid TEXT NOT NULL,
+                region TEXT NOT NULL DEFAULT '',
+                rso_platform_id TEXT NOT NULL DEFAULT '',
+                tag TEXT,
+                summoner_name TEXT NOT NULL DEFAULT '',
+                profile_icon_id INTEGER NOT NULL DEFAULT 0,
+                update_at INTEGER NOT NULL,
+                last_met_at INTEGER,
+                tag_line TEXT,
+                champion_id INTEGER NOT NULL DEFAULT 0,
+                auto_tag TEXT,
+                auto_score REAL,
+                auto_reason TEXT,
+                auto_tag_stats TEXT,
+                last_relation TEXT,
+                PRIMARY KEY (puuid, self_puuid, region, rso_platform_id)
+             );
+             CREATE TABLE encountered_games (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                game_id INTEGER NOT NULL,
+                puuid TEXT NOT NULL,
+                self_puuid TEXT NOT NULL,
+                region TEXT NOT NULL DEFAULT '',
+                rso_platform_id TEXT NOT NULL DEFAULT '',
+                queue_type TEXT NOT NULL DEFAULT '',
+                update_at INTEGER NOT NULL
+             );",
+        )
+        .unwrap();
+        conn
+    }
+
+    /// 与 record_encounters 相同的 UPDATE 语义：仅更新已存在行
+    fn update_existing_only(
+        conn: &Connection,
+        puuid: &str,
+        self_puuid: &str,
+        name: &str,
+        relation: &str,
+        ts: i64,
+    ) -> usize {
+        conn.execute(
+            "UPDATE saved_players SET
+               summoner_name = CASE WHEN ?1 = '' THEN summoner_name ELSE ?1 END,
+               last_relation = CASE WHEN ?2 = '' THEN last_relation ELSE ?2 END,
+               update_at = ?3,
+               last_met_at = ?3
+             WHERE puuid = ?4 AND self_puuid = ?5",
+            params![name, relation, ts, puuid, self_puuid],
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn record_encounters_skips_unknown_players() {
+        let conn = mem_db();
+        let changed = update_existing_only(&conn, "newbie", "me", "Foo", "ally", 1);
+        assert_eq!(changed, 0);
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM saved_players", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn record_encounters_updates_existing_and_relation() {
+        let conn = mem_db();
+        conn.execute(
+            "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, update_at)
+             VALUES ('p1', 'me', '', '', '老坑', 'OldName', 0)",
+            [],
+        )
+        .unwrap();
+
+        let changed = update_existing_only(&conn, "p1", "me", "NewName", "enemy", 999);
+        assert_eq!(changed, 1);
+
+        let (name, tag, rel, met): (String, Option<String>, Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT summoner_name, tag, last_relation, last_met_at FROM saved_players WHERE puuid='p1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(name, "NewName");
+        assert_eq!(tag.as_deref(), Some("老坑"), "手动 tag 不应被相遇更新覆盖");
+        assert_eq!(rel.as_deref(), Some("enemy"));
+        assert_eq!(met, Some(999));
+    }
+
+    #[test]
+    fn auto_tag_upsert_inserts_new_player() {
+        let conn = mem_db();
+        conn.execute(
+            "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, update_at, last_met_at, champion_id, last_relation)
+             VALUES ('carry', 'me', '', '', NULL, 'CarryGuy', 0, 1, 1, 99, 'ally')
+             ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
+               summoner_name = excluded.summoner_name,
+               update_at = excluded.update_at,
+               last_met_at = excluded.last_met_at",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE saved_players SET auto_tag='大腿', auto_score=88, auto_reason='胜 · KDA 12.0' WHERE puuid='carry'",
+            [],
+        )
+        .unwrap();
+
+        let auto_tag: Option<String> = conn
+            .query_row(
+                "SELECT auto_tag FROM saved_players WHERE puuid='carry'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(auto_tag.as_deref(), Some("大腿"));
+    }
+}
