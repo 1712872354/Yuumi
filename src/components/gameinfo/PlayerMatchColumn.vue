@@ -137,15 +137,11 @@ function getMatchCardStyle(m: MatchDisplay): Record<string, string> {
   if (!props.appConfig?.Personalization) return {};
 
   const colors = props.appConfig.Personalization;
-  let color = "";
-
-  if (m.remake) {
-    color = colors.RemakeCardColor || "";
-  } else if (m.win) {
-    color = colors.WinCardColor || "";
-  } else {
-    color = colors.LoseCardColor || "";
-  }
+  const color = m.remake
+    ? colors.RemakeCardColor || ""
+    : m.win
+      ? colors.WinCardColor || ""
+      : colors.LoseCardColor || "";
 
   if (color) {
     if (color.startsWith("#") && color.length === 9) {

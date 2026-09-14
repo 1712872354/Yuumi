@@ -79,7 +79,7 @@ function handleClearCache() {
       try {
         const result = await invoke<string>("clear_game_cache");
         showToast(result);
-      } catch (e: unknown) {
+      } catch {
         showToast("清除缓存失败", "error");
       }
     },
@@ -90,7 +90,7 @@ function handleClearCache() {
 async function handleOpenLogFolder() {
   try {
     await invoke("open_log_folder");
-  } catch (e: unknown) {
+  } catch {
     showToast("打开日志文件夹失败", "error");
   }
 }

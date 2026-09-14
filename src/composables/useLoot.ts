@@ -411,14 +411,11 @@ export function useLoot() {
 
   function openLootModal(loot: OpenableLoot) {
     selectedLoot.value = loot;
-    let maxQ = 0;
-    if (isKeyFragmentLoot(loot)) {
-      maxQ = Math.floor(loot.count / 3);
-    } else {
-      maxQ = loot.needKey
+    const maxQ = isKeyFragmentLoot(loot)
+      ? Math.floor(loot.count / 3)
+      : loot.needKey
         ? Math.min(loot.count, loot.keyCount ?? 0)
         : loot.count;
-    }
     openQuantity.value = Math.max(1, maxQ);
   }
 

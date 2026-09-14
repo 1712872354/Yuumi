@@ -68,7 +68,7 @@ const emit = defineEmits<{
 
 const attrs = useAttrs();
 const filteredAttrs = computed(() => {
-  const { style, class: className, ...rest } = attrs;
+  const { style: _style, class: _className, ...rest } = attrs;
   return rest;
 });
 

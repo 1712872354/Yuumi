@@ -14,7 +14,6 @@ import {
 import type {
   PlayerData,
   PremadePlayerLike,
-  ChampionMasteryItem,
   StreakInfo,
   ChampSelectSessionLike,
 } from "../types/gameInfo";
@@ -23,156 +22,22 @@ import type {
   GameflowParticipant,
   GameflowSession,
   RankedQueueEntry,
-  RankedStats,
 } from "../types/lcu";
 import type { SummonerDisplay } from "../api/lcu";
 import { computePremadeColors } from "./usePremadeGroup";
 import { lazySetItem } from "../utils/lazyStorage";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
-import { TtlCache } from "../utils/ttlCache";
+import { fetchPlayerMastery, fetchRankedStatsCached } from "./playerMastery";
+import {
+  NEW_PLAYER_MAX_LEVEL,
+  isIdentityCompatible,
+  inheritPlaceholderChampion,
+} from "./identityUtils";
+import { clearReserveDataFromStorage } from "./reserveData";
 
-/** LCU 英雄熟练度原始条目（字段命名可能因接口版本略有差异） */
-interface RawMasteryItem {
-  championId?: number;
-  champion_id?: number;
-  championLevel?: number;
-  masteryLevel?: number;
-  level?: number;
-  championPoints?: number;
-  points?: number;
-  score?: number;
-  highestGrade?: string;
-  highest_grade?: string;
-  championPointsSinceLastLevel?: number;
-  championPointsUntilNextLevel?: number;
-  tokensEarned?: number;
-}
-
-// ── 排位 / 熟练度缓存：5 分钟 TTL，最多 100 个玩家
-const rankCache = new TtlCache<RankedStats>(5 * 60 * 1000, 100);
-const masteryCache = new TtlCache<ChampionMasteryItem[]>(5 * 60 * 1000, 100);
-
-export async function fetchPlayerMastery(
-  puuid?: string,
-  summonerId?: number,
-  isMe?: boolean,
-): Promise<ChampionMasteryItem[]> {
-  if (!puuid && !summonerId) return [];
-
-  if (puuid) {
-    const cached = masteryCache.get(puuid);
-    if (cached && cached.length > 0) {
-      return cached;
-    }
-  }
-
-  // 1. 优先按 puuid 查询
-  let mResp: { success: boolean; data?: RawMasteryItem[]; error?: string } = {
-    success: false,
-  };
-  if (puuid) {
-    mResp = await lcuRequest<RawMasteryItem[]>(
-      "GET",
-      `/lol-champion-mastery/v1/${puuid}/champion-mastery`,
-    );
-  }
-
-  // 2. 若是当前玩家且按 puuid 失败（或无 puuid），降级到 local-player
-  if ((!mResp.success || !mResp.data) && isMe) {
-    mResp = await lcuRequest<RawMasteryItem[]>(
-      "GET",
-      "/lol-champion-mastery/v1/local-player/champion-mastery",
-    );
-  }
-
-  // 3. 如果仍未成功，尝试按 summonerId 查询
-  if ((!mResp.success || !mResp.data) && summonerId) {
-    mResp = await lcuRequest<RawMasteryItem[]>(
-      "GET",
-      `/lol-champion-mastery/v1/summoners/${summonerId}/champion-mastery`,
-    );
-  }
-
-  if (mResp.success && Array.isArray(mResp.data)) {
-    const normalized: ChampionMasteryItem[] = mResp.data.map((item) => ({
-      championId: Number(item.championId ?? item.champion_id ?? 0),
-      championLevel: Number(item.championLevel ?? item.masteryLevel ?? item.level ?? 0),
-      championPoints: Number(item.championPoints ?? item.points ?? item.score ?? 0),
-      highestGrade: item.highestGrade ?? item.highest_grade,
-      championPointsSinceLastLevel: item.championPointsSinceLastLevel,
-      championPointsUntilNextLevel: item.championPointsUntilNextLevel,
-      tokensEarned: item.tokensEarned,
-    }));
-    if (puuid) {
-      masteryCache.set(puuid, normalized);
-    }
-    return normalized;
-  }
-
-  return [];
-}
-
-// ── 无身份占位槽的前英雄 ID 继承：仅无身份占位可继承，实名异队数据严禁串用
-function inheritPlaceholderChampion(
-  entry: PlayerData | undefined,
-  cellId: number,
-): number {
-  const champ = entry?.championId ?? 0;
-  if (!champ || champ <= 0) return 0;
-  const ePuuid = entry?.info?.puuid ?? "";
-  const eSid = entry?.info?.summonerId ?? 0;
-  if (ePuuid) return 0;
-  if (eSid && eSid !== cellId) return 0;
-  return champ;
-}
-
-// ── 新号判定上限：空战绩 + 等级在此之下视为从未打过的新号，不标隐藏
-export const NEW_PLAYER_MAX_LEVEL = 30;
-
-// ── 身份门禁（canonical）：incoming 的真实身份键与条目是否冲突。
-// puuid 非空即真实；summonerId 仅在非 0 且不等于 cell 槽位时视为真实
-// （选人/对局切换时 cellId 会被充作 sid 兜底，不可参与比对）。
-// 条目侧同理：info 缺失（loading 占位）或 sid 恰为 cell 槽位都视为无身份，不构成冲突。
-// 注意这是“宽松版”（无冲突即兼容）：seed 预填充与视图层核验直接用它；
-// loadPlayerData 复用已加载项时另需 finished 包装（loading 占位不可复用，占位→真实必须重拉）。
-export function isIdentityCompatible(
-  entry: PlayerData | undefined,
-  incoming: { puuid?: string; summonerId?: number; cellId?: number },
-): boolean {
-  if (!entry?.info) return true;
-  const cell = incoming.cellId ?? -1;
-  const inPuuid = (incoming.puuid || "").trim();
-  const inSid = incoming.summonerId || 0;
-  const inSidReal = Boolean(inSid) && inSid !== cell;
-  const ePuuid = (entry.info.puuid || "").trim();
-  const eRawSid = entry.info.summonerId || 0;
-  const eSid = eRawSid === cell ? 0 : eRawSid;
-  if (inPuuid && ePuuid && inPuuid !== ePuuid) return false;
-  if (inSidReal && eSid && inSid !== eSid) return false;
-  return true;
-}
-
-// ── 保留对局数据 localStorage：持续保留上一局数据，直到新对局开始（ChampSelect 时清理）
-const RESERVE_TEAM_KEYS = [
-  "yuumi_last_gameflow_my_team",
-  "yuumi_last_gameflow_their_team",
-  "yuumi_last_game_player_data",
-  "yuumi_last_game_loaded_count",
-  "yuumi_last_premade_colors_my",
-  "yuumi_last_premade_colors_their",
-  "yuumi_last_game_id",
-  "yuumi_last_game_team_count",
-];
-
-function clearReserveDataFromStorage() {
-  try {
-    for (const k of RESERVE_TEAM_KEYS) {
-      localStorage.removeItem(k);
-    }
-  } catch {
-    /* ignore */
-  }
-}
+// ── 向后兼容 re-export（GameInfo.vue 等外部引用路径保持不变）
+export { fetchPlayerMastery } from "./playerMastery";
+export { NEW_PLAYER_MAX_LEVEL, isIdentityCompatible } from "./identityUtils";
 
 // ── gameflow session 短期缓存，避免同一流程中多次请求同一端点
 let cachedSession: { data: GameflowSession; timestamp: number } | null = null;
@@ -809,23 +674,7 @@ export function useGamePlayerData(
               })
           : Promise.resolve([] as MatchDisplay[]),
         safeInfo.puuid
-          ? (() => {
-              const cached = rankCache.get(safeInfo.puuid);
-              if (cached) {
-                return Promise.resolve({ success: true, data: cached });
-              }
-              return lcuRequest<RankedStats>(
-                "GET",
-                `/lol-ranked/v1/ranked-stats/${safeInfo.puuid}`,
-              )
-                .then((rResp) => {
-                  if (rResp.success && rResp.data) {
-                    rankCache.set(safeInfo.puuid, rResp.data);
-                  }
-                  return rResp;
-                })
-                .catch(() => ({ success: false as const }));
-            })()
+          ? fetchRankedStatsCached(safeInfo.puuid)
           : Promise.resolve({ success: false as const }),
         fetchPlayerMastery(
           safeInfo.puuid,

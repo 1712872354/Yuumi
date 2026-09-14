@@ -137,7 +137,7 @@ export function getItemIconUrl(
 }
 
 function formatTraitName(raw: string): string {
-  let s = raw
+  const s = raw
     .replace(/trait$/i, "")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
     .replace(/^[a-z]/, (c) => c.toUpperCase());

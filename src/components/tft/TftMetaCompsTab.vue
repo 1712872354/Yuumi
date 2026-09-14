@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from "vue";
+import { ref, onMounted, onUnmounted, computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { NSpin, NEmpty, NButton, NTag, NModal } from "naive-ui";
 import {
@@ -189,11 +189,12 @@ function isFrontlineUnit(unit: TftMetaUnit): boolean {
 
 const isFallbackBoard = ref(false);
 
-const displayUnits = computed(() => {
-  const units = selectedDeck.value?.units;
+function computeDisplayBoard(units: TftMetaUnit[] | undefined): {
+  units: TftMetaUnit[];
+  isFallback: boolean;
+} {
   if (!units?.length) {
-    isFallbackBoard.value = false;
-    return [];
+    return { units: [], isFallback: false };
   }
 
   const hasValidCells = units.some(
@@ -201,12 +202,10 @@ const displayUnits = computed(() => {
   );
 
   if (hasValidCells) {
-    isFallbackBoard.value = false;
-    return units;
+    return { units, isFallback: false };
   }
 
   // 兜底：当 OP.GG 接口对个别阵容返回 cell: null 时，智能精准区分前排与后排站位
-  isFallbackBoard.value = true;
   const result: TftMetaUnit[] = [];
   const occupied = new Set<string>();
 
@@ -257,8 +256,19 @@ const displayUnits = computed(() => {
     result.push(copy);
   });
 
-  return result;
-});
+  return { units: result, isFallback: true };
+}
+
+const displayBoard = computed(() => computeDisplayBoard(selectedDeck.value?.units));
+const displayUnits = computed(() => displayBoard.value.units);
+
+watch(
+  () => displayBoard.value.isFallback,
+  (v) => {
+    isFallbackBoard.value = v;
+  },
+  { immediate: true },
+);
 
 function selectDeck(item: { deck: TftMetaDeck }) {
   selectedDeck.value = item.deck;
