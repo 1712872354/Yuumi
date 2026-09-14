@@ -60,6 +60,7 @@ declare module 'vue' {
     NSpin: typeof import('naive-ui')['NSpin']
     NSwitch: typeof import('naive-ui')['NSwitch']
     NTooltip: typeof import('naive-ui')['NTooltip']
+    NVirtualList: typeof import('naive-ui')['NVirtualList']
     OnlineStatusCard: typeof import('./components/tools/quickactions/OnlineStatusCard.vue')['default']
     OpggFilterBar: typeof import('./components/opgg/OpggFilterBar.vue')['default']
     OpggModal: typeof import('./components/OpggModal.vue')['default']
