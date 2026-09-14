@@ -649,6 +649,7 @@
     "wins": "W/L",
     "mastery": "Best",
     "matchHidden": "History hidden",
+    "historyUnavailableInGame": "Match history unavailable in-game; recovers after the match",
     "tagSelf": "Self",
     "tagMarked": "Marked",
     "tagFateAlly": "Prev ally",

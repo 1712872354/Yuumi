@@ -462,8 +462,7 @@ pub async fn get_tft_match_history(
         let secs = (game_creation / 1000) as i64;
         let time_str = chrono::DateTime::from_timestamp(secs, 0)
             .map(|dt| {
-                let utc8_fixed = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
-                dt.with_timezone(&utc8_fixed)
+                dt.with_timezone(&chrono::Local)
                     .format("%m-%d %H:%M")
                     .to_string()
             })

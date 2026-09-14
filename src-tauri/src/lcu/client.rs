@@ -213,7 +213,7 @@ pub async fn lcu_request(
 
     // 获取并发许可（每轮重试单独 acquire，避免挂起请求占死并发池）
     let semaphore = {
-        let lock = app_state.api_semaphore.read().await;
+        let lock = app_state.lcu.api_semaphore.read().await;
         lock.clone()
     };
 
@@ -331,7 +331,7 @@ pub async fn wait_for_game_data(app_state: &AppState) {
     let mut check_count = 0;
     while check_count < 20 {
         {
-            let assets = app_state.game_data.read().await;
+            let assets = app_state.lcu.game_data.read().await;
             if !assets.spells.is_empty() {
                 break;
             }
@@ -410,7 +410,7 @@ async fn resolve_asset(app_state: &AppState, path: &str) -> Result<(Vec<u8>, Str
         // 锁内只提取连接参数（http_client 克隆是 Arc 浅拷贝），立即释放读锁，
         // 避免跨 HTTP await 持有锁阻塞 monitor 重连写锁
         let (port, token, http_client) = {
-            let lcu_guard = app_state.lcu_client.read().await;
+            let lcu_guard = app_state.lcu.client.read().await;
             match lcu_guard.as_ref() {
                 Some(lcu) => (lcu.port, lcu.token.clone(), lcu.http_client.clone()),
                 None => return Err("LCU 未连接".to_string()),

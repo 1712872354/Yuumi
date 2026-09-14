@@ -1,0 +1,64 @@
+/* 全局基础重置与滚动条 */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  overflow: hidden;
+  user-select: none;
+}
+
+html[data-mica="true"] body {
+  background-color: transparent !important;
+}
+
+/* 悬浮窗容器：全透明背景，无滚动 */
+.overlay-container {
+  width: 100vw;
+  height: 100vh;
+  background: transparent !important;
+  overflow: hidden;
+}
+
+/* 精致苹果风悬浮滚动条 */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+}
+[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--primary-color-alpha-30) !important;
+}
+
+/* 性能保障降级策略：非云母模式下使用实色背景，减少 GPU 重绘 */
+:root:not([data-mica="true"]) {
+  --sidebar-bg: #ffffff;
+  --card-bg: #f8fafc;
+  --card-bg-hover: #f1f5f9;
+  --titlebar-bg: #ffffff;
+  --settings-row-bg: #f1f5f9;
+  --settings-row-bg-hover: #e2e8f0;
+  --glass-filter: none;
+}
+[data-theme="dark"]:not([data-mica="true"]) {
+  --sidebar-bg: #111827;
+  --card-bg: #1e293b;
+  --card-bg-hover: #334155;
+  --titlebar-bg: #0b0f19;
+  --settings-row-bg: #1e293b;
+  --settings-row-bg-hover: #334155;
+  --glass-filter: none;
+}

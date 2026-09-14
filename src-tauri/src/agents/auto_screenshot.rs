@@ -295,7 +295,15 @@ pub fn start(app_handle: AppHandle) {
                         }
                     }
                     Err(e) => {
-                        log::warn!("获取 Live Client Data eventdata 失败: {}", e);
+                        // 尚未成功连上 LCD 时（游戏加载中）属预期；已初始化后仍失败才是对局中的异常
+                        if last_processed_event_id.is_none() {
+                            log::debug!(
+                                "获取 Live Client Data eventdata 失败 (游戏可能未完全载入): {}",
+                                e
+                            );
+                        } else {
+                            log::warn!("获取 Live Client Data eventdata 失败: {}", e);
+                        }
                     }
                 }
             }

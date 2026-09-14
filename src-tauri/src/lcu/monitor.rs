@@ -217,8 +217,11 @@ pub fn start(
                         {
                             use tauri::Manager;
                             let state = app_handle.state::<crate::AppState>();
-                            let mut old_tx =
-                                state.ws_cancel_tx.lock().unwrap_or_else(|e| e.into_inner());
+                            let mut old_tx = state
+                                .lcu
+                                .ws_cancel_tx
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
                             if let Some(tx) = old_tx.take() {
                                 let _ = tx.send(true);
                             }

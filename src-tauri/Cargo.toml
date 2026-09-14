@@ -77,7 +77,7 @@ tauri-plugin-single-instance = "2"
 
 [profile.release]
 opt-level = 3
-lto = false
+lto = "thin"
 strip = true
 panic = "abort"
 

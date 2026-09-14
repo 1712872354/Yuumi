@@ -7,6 +7,9 @@ import type { SummonerDisplay, MatchDisplay, RecentTeammate } from "../../api/lc
 import type { RankDisplaySource, RankedQueueEntry } from "../../types/lcu";
 import LcuImage from "../LcuImage.vue";
 import { NPopover, NSpin } from "naive-ui";
+import { QUEUE_FILTER_OPTIONS, formatRankDisplay } from "../../utils/queueMeta";
+import { getQueueName as resolveQueueName } from "../../utils/queueName";
+import { computeStatsSummary } from "../../composables/gamePlayerStats";
 
 const store = useLcuStore();
 const { t, te } = useI18n();
@@ -39,29 +42,7 @@ const recentTeammates = ref<RecentTeammate[]>([]);
 let currentTeammatePuuid = "";
 let lastCalculatedGameIds = "";
 
-const QUEUE_OPTIONS = [
-  { id: null, label: "全部" },
-  { id: 2400, label: "海克斯大乱斗" },
-  { id: 2450, label: "经典海斗" },
-  { id: 450, label: "极地大乱斗" },
-  { id: 430, label: "匹配模式" },
-  { id: 420, label: "单双排位" },
-  { id: 440, label: "灵活排位" },
-];
-
-const TIER_MAP: Record<string, string> = {
-  NONE: "无段位",
-  IRON: "坚韧黑铁",
-  BRONZE: "英勇黄铜",
-  SILVER: "不屈白银",
-  GOLD: "荣耀黄金",
-  PLATINUM: "华贵铂金",
-  EMERALD: "流光翡翠",
-  DIAMOND: "璀璨钻石",
-  MASTER: "超凡大师",
-  GRANDMASTER: "傲世宗师",
-  CHALLENGER: "最强王者",
-};
+const QUEUE_OPTIONS = QUEUE_FILTER_OPTIONS;
 
 // ─── 计算属性 ───
 const filteredMatches = computed(() => {
@@ -77,31 +58,7 @@ const flexQueue = computed(() =>
   rankedQueues.value.find((q) => q.queueType === "RANKED_FLEX_SR") || null,
 );
 
-const statsSummary = computed(() => {
-  if (recentMatches.value.length === 0) return null;
-  let wins = 0, losses = 0, kills = 0, deaths = 0, assists = 0;
-  const champMap: Record<number, { id: number; icon: string; count: number }> = {};
-
-  for (const m of recentMatches.value) {
-    if (m.win) wins++;
-    else losses++;
-    kills += m.kills;
-    deaths += m.deaths;
-    assists += m.assists;
-
-    if (!champMap[m.championId]) {
-      champMap[m.championId] = { id: m.championId, icon: m.championIconUrl, count: 0 };
-    }
-    champMap[m.championId].count++;
-  }
-
-  const topChamps = Object.values(champMap)
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 6);
-
-  const kdaRatio = deaths === 0 ? "Perfect" : ((kills + assists) / deaths).toFixed(1);
-  return { wins, losses, kills, deaths, assists, kda: kdaRatio, topChamps };
-});
+const statsSummary = computed(() => computeStatsSummary(recentMatches.value));
 
 // ─── 辅助函数 ───
 function selectQueue(id: number | null) {
@@ -110,25 +67,19 @@ function selectQueue(id: number | null) {
 }
 
 function formatRank(queue: RankDisplaySource | null) {
-  if (!queue || !queue.tier || queue.tier === "NONE") return "--";
-  const tierCn = TIER_MAP[queue.tier] || queue.tier;
+  if (!queue) return "--";
   const raw = queue.rank && queue.rank !== "NA" ? queue.rank : queue.division;
-  const division = !raw || raw === "NA" ? "" : " " + raw;
-  return `${tierCn}${division}`;
+  return formatRankDisplay(queue.tier, raw);
 }
 
 function formatHighestRank(queue: RankDisplaySource | null) {
-  if (!queue || !queue.highestTier || queue.highestTier === "NONE") return "--";
-  const tierCn = TIER_MAP[queue.highestTier] || queue.highestTier;
-  const division = !queue.highestRank || queue.highestRank === "NA" ? "" : " " + queue.highestRank;
-  return `${tierCn}${division}`;
+  if (!queue) return "--";
+  return formatRankDisplay(queue.highestTier, queue.highestRank);
 }
 
 function formatPrevSeasonRank(queue: RankDisplaySource | null) {
-  if (!queue || !queue.previousSeasonEndTier || queue.previousSeasonEndTier === "NONE") return "--";
-  const tierCn = TIER_MAP[queue.previousSeasonEndTier] || queue.previousSeasonEndTier;
-  const division = !queue.previousSeasonEndRank || queue.previousSeasonEndRank === "NA" ? "" : " " + queue.previousSeasonEndRank;
-  return `${tierCn}${division}`;
+  if (!queue) return "--";
+  return formatRankDisplay(queue.previousSeasonEndTier, queue.previousSeasonEndRank);
 }
 
 function getSpellIcon(m: MatchDisplay, slot: 1 | 2): string {
@@ -151,18 +102,7 @@ function translateMapName(name: string): string {
 }
 
 function getQueueName(m: MatchDisplay): string {
-  const key = `gameModes.${m.queueId}`;
-  if (te(key)) {
-    const translation = t(key);
-    if (
-      (translation.includes("云顶") || translation.includes("TFT")) &&
-      !m.name.includes("云顶") && !m.name.includes("TFT")
-    ) {
-      return m.name;
-    }
-    return translation;
-  }
-  return m.name;
+  return resolveQueueName(m.queueId, m.name, { t, te });
 }
 
 const TFT_QUEUES = [1090, 1100, 1130, 1160];

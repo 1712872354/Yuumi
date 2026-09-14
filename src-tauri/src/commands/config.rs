@@ -70,6 +70,7 @@ async fn apply_side_effects(
 
     if changes.reset_lobby {
         let _ = app_state
+            .agents
             .gameflow_tx
             .try_send(crate::agents::auto_match::GameflowEvent::ResetLobbyState);
     }
@@ -84,7 +85,7 @@ async fn apply_side_effects(
             crate::signalr::start(app_handle.clone(), server_url, user_id);
         } else {
             log::info!("配置更新，停止 SignalR Hub 远程反代");
-            crate::signalr::stop().await;
+            crate::signalr::stop(app_handle).await;
         }
     }
 
@@ -94,7 +95,7 @@ async fn apply_side_effects(
     }
 
     if changes.api_concurrency_changed {
-        let mut sem_lock = app_state.api_semaphore.write().await;
+        let mut sem_lock = app_state.lcu.api_semaphore.write().await;
         *sem_lock = Arc::new(Semaphore::new(
             new_config.functions.api_concurrency_number as usize,
         ));

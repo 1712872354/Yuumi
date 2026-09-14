@@ -39,3 +39,26 @@ export function isIdentityCompatible(
   if (inSidReal && eSid && inSid !== eSid) return false;
   return true;
 }
+
+/**
+ * 将同一 PlayerData 以 cellId / summonerId / puuid 别名写入 playerData 表。
+ * 读侧可按任一身份键查找；计数/遍历请用 uniquePlayerEntries 去重。
+ */
+export function setPlayerDataAliases(
+  map: Record<string | number, PlayerData>,
+  data: PlayerData,
+  keys: { cellId?: number; summonerId?: number; puuid?: string },
+): void {
+  if (keys.cellId !== undefined) map[keys.cellId] = data;
+  if (keys.summonerId && keys.summonerId !== keys.cellId) {
+    map[keys.summonerId] = data;
+  }
+  if (keys.puuid) map[keys.puuid] = data;
+}
+
+/** 按对象引用去重后的玩家条目（多键别名只算一人） */
+export function uniquePlayerEntries(
+  map: Record<string | number, PlayerData>,
+): PlayerData[] {
+  return [...new Set(Object.values(map))];
+}

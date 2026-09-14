@@ -644,6 +644,7 @@
     "premadeIdx": "組隊 {idx}",
     "soloRank": "單雙",
     "flexRank": "靈活",
+    "historyUnavailableInGame": "對局中暫無法拉取戰績，結算後自動恢復",
     "noRank": "無",
     "soloRankTitle": "單雙排: 無段位",
     "flexRankTitle": "靈活排: 無段位",

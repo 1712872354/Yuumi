@@ -1,99 +1,36 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed, provide, defineAsyncComponent } from "vue";
+import { ref, onMounted, watch, computed, provide } from "vue";
 import { useLcuStore, initLcuListeners, type ChampSelectSession } from "./store/lcuStore";
 import { storeToRefs } from "pinia";
 import { fetchCurrentSummoner, getGameflowPhase, lcuRequest, fetchConfig } from "./api/lcu";
-import {
-  updateThemeColor,
-  updateDeathColor,
-  applyDpiScale,
-  toHex6,
-  updateCardColors,
-} from "./utils/theme";
 import { useI18n } from "vue-i18n";
 import { setLocale } from "./i18n";
-import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
-import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { SummonerDisplay, AppConfig } from "./api/lcu";
-import { darkTheme, type GlobalThemeOverrides } from "naive-ui";
 import NaiveApiCapture from "./components/NaiveApiCapture.vue";
 import { useToast, getCapturedDialog } from "./composables/useToast";
-import Home from "./views/Home.vue";
-import Career from "./views/Career.vue";
-import Search from "./views/Search.vue";
-import GameInfo from "./views/GameInfo.vue";
+import {
+  applyMicaEffect,
+  applyPersonalizationAppearance,
+  applyThemeColorsOnly,
+  useThemeState,
+} from "./composables/useAppTheme";
+import { useOpggWindow } from "./composables/useOpggWindow";
+import { useUpdateFlow } from "./composables/useUpdateFlow";
+import { useRadarAlert } from "./composables/useRadarAlert";
 import BenchOverlay from "./views/BenchOverlay.vue";
-import TFT from "./views/TFT.vue";
-import SavedPlayers from "./views/SavedPlayers.vue";
-const Settings = defineAsyncComponent(() => import("./views/Settings.vue"));
-const Tools = defineAsyncComponent(() => import("./views/Tools.vue"));
 import NoticePopup from "./components/NoticePopup.vue";
-import UpdateDialog, { type UpdateInfo } from "./components/UpdateDialog.vue";
+import UpdateDialog from "./components/UpdateDialog.vue";
 import CustomTitleBar from "./components/layout/CustomTitleBar.vue";
 import NavigationSidebar from "./components/layout/NavigationSidebar.vue";
+import { buildKeepAlivePages, Home } from "./constants/appPages";
 
-function applyThemeMode(mode: string) {
-  const root = document.documentElement;
-  if (mode === "Auto") {
-    root.removeAttribute("data-theme");
-    localStorage.setItem("yuumi_theme", "Auto");
-  } else if (mode === "Light" || mode === "Dark") {
-    root.setAttribute("data-theme", mode.toLowerCase());
-    localStorage.setItem("yuumi_theme", mode);
-  }
-}
-
-function applyMicaEffect(enabled: boolean) {
-  const root = document.documentElement;
-  if (enabled) {
-    root.setAttribute("data-mica", "true");
-  } else {
-    root.removeAttribute("data-mica");
-  }
-  invoke("set_mica_effect", { enabled }).catch((e: unknown) =>
-    console.warn("应用云母效果失败:", e),
-  );
-}
 provide("applyMicaEffect", applyMicaEffect);
 
-// 水晶极光主题覆盖（动态响应系统主题色）
-const themeOverrides = computed<GlobalThemeOverrides>(() => {
-  const customColor = appConfig.value?.Personalization?.ThemeColor
-    ? toHex6(appConfig.value.Personalization.ThemeColor)
-    : "#a78bfa";
-
-  const isDark = isDarkTheme.value;
-
-  return {
-    common: {
-      primaryColor: customColor,
-      primaryColorHover: customColor + "d9", // 85% alpha hover
-      primaryColorPressed: customColor + "a6", // 65% alpha pressed
-      borderRadius: "10px",
-    },
-    Card: {
-      color: "rgba(255, 255, 255, 0.15)",
-      borderColor: "rgba(255, 255, 255, 0.2)",
-    },
-    Dialog: {
-      color: isDark ? "rgba(28, 28, 30, 0.92)" : "rgba(255, 255, 255, 0.90)",
-      borderColor: isDark ? "rgba(255, 255, 255, 0.12)" : "rgba(0, 0, 0, 0.08)",
-      iconColorWarning: customColor,
-      iconColorError: "#ec4899",
-      iconColorSuccess: "#10b981",
-      iconColorInfo: customColor,
-    },
-    Button: {
-      textColorPrimary: "#ffffff",
-    },
-  };
-});
-
 const store = useLcuStore();
-const { gamePhase } = storeToRefs(store);
-const currentPage = ref("home");
+const { gamePhase, currentPage } = storeToRefs(store);
 const appConfig = ref<AppConfig | null>(null);
 provide("appConfig", appConfig);
 const pageHistory: string[] = [];
@@ -109,70 +46,70 @@ const isOverlayWindow = ref(
   window.location.search.includes("window=bench-overlay"),
 );
 
-// 自动更新弹窗 + 侧边栏红点
-// updateInfo 仅用于 UpdateDialog 显示（需用户触发或自动下载时才赋值）
-// pendingUpdateInfo 用于侧边栏红点与 Settings 的“发现新版本”卡片
-const updateInfo = ref<UpdateInfo | null>(null);
-const pendingUpdateInfo = ref<UpdateInfo | null>(null);
-const hasUpdate = ref(false);
+const { isDarkTheme, themeOverrides, darkTheme } = useThemeState(appConfig);
+
+// 自动更新：pendingUpdateInfo → 侧边栏红点；updateInfo → 弹窗内容
+const {
+  updateInfo,
+  pendingUpdateInfo,
+  hasUpdate,
+  updateDialogMinimized,
+  isPortable,
+  showUpdateInfo,
+  setupUpdateListeners,
+} = useUpdateFlow(appConfig);
 provide("hasUpdate", hasUpdate);
 provide("updateInfo", pendingUpdateInfo);
-const updateDialogMinimized = ref(true);
-
-// 供子组件（Settings 手动检查 / 立即更新）将更新信息推送到 UpdateDialog
-// expanded=true 时直接展开带日志的大弹窗（未开启自动更新时“立即更新”直达日志窗），否则显示右下角小气泡
-provide("showUpdateInfo", (info: UpdateInfo, expanded = false) => {
-  pendingUpdateInfo.value = info;
-  updateInfo.value = info;
-  hasUpdate.value = true;
-  updateDialogMinimized.value = !expanded;
-});
-
-// 是否为便携版（决定更新弹窗走 zip 覆盖方案）
-const isPortable = ref(false);
+provide("showUpdateInfo", showUpdateInfo);
 
 // Toast 通知（通过 Naive UI Message API；App.vue 位于 Provider 之上，由捕获实例提供）
 const { showToast } = useToast();
+
+const { openOpggWindow } = useOpggWindow(appConfig, () => store.isConnected);
+provide("openOpgg", openOpggWindow);
+
+const { setupRadarAlertListener } = useRadarAlert(appConfig);
 
 // 用于 Career → Search 跳转的共享状态
 const navigateSearchPayload = ref<{
   name: string;
   gameId: number | null;
 } | null>(null);
-
 provide("navigateSearchPayload", navigateSearchPayload);
 
 // 用于跳转到 Career 查看指定召唤师的共享状态
 const navigateCareerPayload = ref<{
   puuid: string;
 } | null>(null);
-
 provide("navigateCareerPayload", navigateCareerPayload);
 
-const isSystemDark = ref(
-  window.matchMedia("(prefers-color-scheme: dark)").matches,
-);
-onMounted(() => {
-  const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const handler = (e: MediaQueryListEvent) => {
-    isSystemDark.value = e.matches;
-  };
-  media.addEventListener("change", handler);
-});
-
-const isDarkTheme = computed(() => {
-  const mode = appConfig.value?.Personalization?.ThemeMode || "Auto";
-  if (mode === "Dark") return true;
-  if (mode === "Light") return false;
-  return isSystemDark.value;
-});
-
-// 供子组件跳转页面
+// 供子组件跳转页面（store 为 currentPage 唯一真源）
 function navigateTo(page: string) {
-  currentPage.value = page;
+  store.setCurrentPage(page);
 }
 provide("navigateTo", navigateTo);
-provide("openOpgg", openOpggWindow);
+
+/** 已访问过的保活页（延迟首次挂载） */
+const visitedPages = ref<Record<string, boolean>>({});
+watch(
+  currentPage,
+  (val) => {
+    if (val) visitedPages.value = { ...visitedPages.value, [val]: true };
+  },
+  { immediate: true },
+);
+
+const keepAlivePages = computed(() =>
+  buildKeepAlivePages({
+    hideTft: !!appConfig.value?.Functions?.HideTft,
+    hideSavedPlayers: !!appConfig.value?.Functions?.HideSavedPlayers,
+  }),
+);
+
+function shouldMountPage(key: string, hiddenWhen?: boolean) {
+  if (hiddenWhen) return false;
+  return !!visitedPages.value[key] || currentPage.value === key;
+}
 
 const regionName = computed(() => {
   if (!platformId.value) return t("regions.HN1");
@@ -205,71 +142,8 @@ onMounted(async () => {
     navigate(event.payload);
   });
 
-  // 识别便携版（便携版更新走 zip 覆盖方案）
-  try {
-    isPortable.value = await invoke<boolean>("is_portable");
-  } catch (e) {
-    console.warn("[App] 识别便携版失败:", e);
-  }
-
-  // 监听 Rust 后端推送的更新可用事件
-  // 后台逻辑：startup_check_update 始终检测并 emit，仅当 EnableCheckUpdate=true 时才自动后台下载
-  // 前端策略：自动更新关闭时仅点亮侧边栏红点+Settings 卡片，不自动弹出下载气泡/弹窗
-  await listen<UpdateInfo>("updater://update-available", (event) => {
-    pendingUpdateInfo.value = event.payload;
-    hasUpdate.value = true;
-    const autoEnabled = appConfig.value?.General?.EnableCheckUpdate ?? false;
-    if (autoEnabled) {
-      updateDialogMinimized.value = true;
-      updateInfo.value = event.payload;
-    }
-  });
-
-  // 监听后台下载完成事件：若用户此前已关闭更新弹窗，重新弹出"更新就绪"气泡，
-  // 避免下载好的更新因前端丢失入口而无法安装
-  await listen<UpdateInfo>("updater://download-ready", (event) => {
-    pendingUpdateInfo.value = event.payload;
-    hasUpdate.value = true;
-    if (!updateInfo.value) {
-      updateDialogMinimized.value = true;
-      updateInfo.value = event.payload;
-    }
-  });
-
-  // 对局雷达：选人阶段发现已知（已标记）队友
-  await listen<{
-    players: Array<{
-      name: string;
-      tag: string;
-      autoTag?: string | null;
-      manualTag?: string | null;
-      relation?: string | null;
-      listKind?: string;
-      listReason?: string | null;
-    }>;
-  }>("radar-alert", (event) => {
-    const players = event.payload?.players || [];
-    if (!players.length) return;
-    // 黑名单优先且更醒目
-    const blacks = players.filter((p) => p.listKind === "black");
-    if (blacks.length) {
-      for (const p of blacks.slice(0, 2)) {
-        const why = p.listReason || p.tag || "已拉黑";
-        showToast(`🚫 拉黑玩家 ${p.name}：${why}`, "error");
-      }
-      const dodgeOn = appConfig.value?.Functions?.EnableDodgeReminder !== false;
-      if (dodgeOn) {
-        showToast("检测到黑名单队友，可考虑秒退（不会自动秒）", "warning");
-      }
-    }
-    for (const p of players.filter((x) => x.listKind !== "black").slice(0, 3)) {
-      const isGood = p.autoTag === "大腿" || p.autoTag === "C位" || p.listKind === "white";
-      const icon = isGood ? "✓" : p.autoTag === "坑" || p.autoTag === "演员" ? "⚠" : "📌";
-      const rel = p.relation === "enemy" ? "曾对手" : p.relation === "ally" ? "曾同队" : "";
-      const parts = [p.tag, rel].filter(Boolean).join(" · ");
-      showToast(`${icon} 雷达 ${p.name}：${parts || "已标记"}`, isGood ? "success" : "warning");
-    }
-  });
+  await setupUpdateListeners();
+  await setupRadarAlertListener();
 
   // 自动启动 LOL 客户端并按需显示主窗口
   try {
@@ -300,23 +174,8 @@ onMounted(async () => {
     if (!cfg?.General?.EnableGameStartMinimize) {
       await getCurrentWindow().show();
     }
-    // 应用主题色、死亡数字颜色、界面缩放、云母效果
-    if (cfg?.Personalization) {
-      if (cfg.Personalization.ThemeColor) {
-        updateThemeColor(cfg.Personalization.ThemeColor);
-      }
-      updateCardColors(
-        cfg.Personalization.WinCardColor,
-        cfg.Personalization.LoseCardColor,
-        cfg.Personalization.RemakeCardColor,
-      );
-      updateDeathColor(
-        cfg.Personalization.LightDeathsNumberColor,
-        cfg.Personalization.DarkDeathsNumberColor,
-      );
-      applyDpiScale(cfg.Personalization.DpiScale);
-      applyThemeMode(cfg.Personalization.ThemeMode);
-      applyMicaEffect(!!cfg.Personalization.MicaEnabled);
+    if (cfg) {
+      applyPersonalizationAppearance(cfg);
     }
   } catch (e) {
     console.warn("[App] 启动配置检查失败:", e);
@@ -336,104 +195,17 @@ function navigate(page: string) {
   if (currentPage.value !== page) {
     pageHistory.push(currentPage.value);
   }
-  currentPage.value = page;
+  store.setCurrentPage(page);
 }
 
 function goBack() {
   if (pageHistory.length > 0) {
-    currentPage.value = pageHistory.pop()!;
+    store.setCurrentPage(pageHistory.pop()!);
   }
 }
 
 function toggleSidebar() {
   isSidebarExpanded.value = !isSidebarExpanded.value;
-}
-
-async function openOpggWindow(championId?: number) {
-  if (!store.isConnected) {
-    showToast(t("common.lcuNotConnected"), "warning");
-    return;
-  }
-  // 传递目标英雄给 OP.GG 窗口
-  if (championId && championId > 0) {
-    try {
-      localStorage.setItem("yuumi_opgg_champ", String(championId));
-    } catch {
-      /* ignore */
-    }
-  } else {
-    try {
-      localStorage.removeItem("yuumi_opgg_champ");
-    } catch {
-      /* ignore */
-    }
-  }
-  const existing = await WebviewWindow.getByLabel("opgg");
-  if (existing) {
-    await existing.setFocus();
-    // 已有窗口时通过事件通知切换英雄
-    if (championId && championId > 0) {
-      await existing.emit("opgg-select-champion", championId);
-    }
-    return;
-  }
-
-  // 从配置中读取是否置顶窗口
-  let alwaysOnTop = false;
-  try {
-    const cfg = appConfig.value || (await fetchConfig());
-    alwaysOnTop = cfg.Functions?.EnableOpggOnTop ?? false;
-  } catch (e) {
-    console.warn("加载置顶配置失败，使用默认值:", e);
-  }
-
-  // 根据当前主题决定原生标题栏颜色
-  const savedTheme = localStorage.getItem("yuumi_theme");
-  const isSystemDark = window.matchMedia(
-    "(prefers-color-scheme: dark)",
-  ).matches;
-  const nativeTheme: "dark" | "light" =
-    savedTheme === "Dark" || (savedTheme !== "Light" && isSystemDark)
-      ? "dark"
-      : "light";
-
-  // 获取当前窗口所在屏幕（显示器），将 OP.GG 窗口放置在屏幕右侧
-  const monitor = await currentMonitor();
-  if (monitor) {
-    // Monitor 的 position/size 是物理像素，需要转为逻辑像素
-    const pos = monitor.position.toLogical(monitor.scaleFactor);
-    const size = monitor.size.toLogical(monitor.scaleFactor);
-    new WebviewWindow("opgg", {
-      url: "opgg.html",
-      title: "OP.GG",
-      width: 760,
-      height: 820,
-      x: pos.x + size.width - 760 - 2,
-      y: pos.y + 2,
-      decorations: true,
-      resizable: true,
-      center: false,
-      alwaysOnTop,
-      theme: nativeTheme,
-    });
-  } else {
-    // 兜底：获取不到屏幕信息时，放在主窗口右侧
-    const mainPos = await getCurrentWindow().outerPosition();
-    const mainSize = await getCurrentWindow().innerSize();
-    new WebviewWindow("opgg", {
-      url: "opgg.html",
-      title: "OP.GG",
-      width: 760,
-      height: 820,
-      x: mainPos.x + mainSize.width + 2,
-      y: mainPos.y,
-      decorations: true,
-      resizable: true,
-      center: false,
-      alwaysOnTop,
-      theme: nativeTheme,
-    });
-  }
 }
 
 async function loadLcuState() {
@@ -490,19 +262,7 @@ async function loadLcuState() {
   // 5. 主题色
   try {
     const config = cfg.status === "fulfilled" ? cfg.value : null;
-    if (config && config.Personalization) {
-      if (config.Personalization.ThemeColor) {
-        updateThemeColor(config.Personalization.ThemeColor);
-      }
-      updateCardColors(
-        config.Personalization.WinCardColor,
-        config.Personalization.LoseCardColor,
-        config.Personalization.RemakeCardColor,
-      );
-      if (config.Personalization.ThemeMode) {
-        applyThemeMode(config.Personalization.ThemeMode);
-      }
-    }
+    applyThemeColorsOnly(config);
   } catch (e) {
     console.warn("[loadLcuState] 加载配置失败:", e);
   }
@@ -547,39 +307,7 @@ watch(navigateCareerPayload, (payload) => {
   }
 });
 
-const hasVisitedSearch = ref(false);
-const hasVisitedGameInfo = ref(false);
-const hasVisitedCareer = ref(false);
-const hasVisitedTft = ref(false);
-const hasVisitedSettings = ref(false);
-const hasVisitedTools = ref(false);
-const hasVisitedSavedPlayers = ref(false);
-
-// 监听本地路由变化并同步到 Pinia 状态库，确保其他子组件可按需刷新
-watch(currentPage, (val) => {
-  store.setCurrentPage(val);
-  if (val === "search") {
-    hasVisitedSearch.value = true;
-  }
-  if (val === "gameinfo") {
-    hasVisitedGameInfo.value = true;
-  }
-  if (val === "career") {
-    hasVisitedCareer.value = true;
-  }
-  if (val === "tft") {
-    hasVisitedTft.value = true;
-  }
-  if (val === "settings") {
-    hasVisitedSettings.value = true;
-  }
-  if (val === "tools") {
-    hasVisitedTools.value = true;
-  }
-  if (val === "savedplayers") {
-    hasVisitedSavedPlayers.value = true;
-  }
-}, { immediate: true });
+// currentPage 已为 store 单一真源；visitedPages 在 setup 顶部维护
 
 // 防止 session 高频事件重复请求开启悬浮窗（Rust 侧已按 300ms 节流，这里再做一次性守卫）
 let benchOverlayRequested = false;
@@ -827,108 +555,18 @@ async function handleClose() {
 
             <!-- 右侧内容区域 -->
             <main class="content-wrapper">
-              <!-- GameInfo 用 v-show 保持状态，配合 hasVisitedGameInfo 延迟挂载，避免应用启动即加载对局数据 -->
-              <div
-                v-show="currentPage === 'gameinfo'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <GameInfo v-if="hasVisitedGameInfo || currentPage === 'gameinfo'" />
-              </div>
-
-              <!-- Search 用 v-show 保持状态，配合 hasVisitedSearch 延迟挂载 -->
-              <div
-                v-show="currentPage === 'search'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <Search v-if="hasVisitedSearch || currentPage === 'search'" />
-              </div>
-
-              <div
-                v-show="currentPage === 'career'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <Career v-if="hasVisitedCareer || currentPage === 'career'" />
-              </div>
-
-              <div
-                v-show="currentPage === 'tft'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <TFT
-                  v-if="
-                    (hasVisitedTft || currentPage === 'tft') &&
-                    !appConfig?.Functions?.HideTft
-                  "
-                />
-              </div>
-
-              <div
-                v-show="currentPage === 'settings'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <Settings v-if="hasVisitedSettings || currentPage === 'settings'" />
-              </div>
-
-              <div
-                v-show="currentPage === 'tools'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <Tools v-if="hasVisitedTools || currentPage === 'tools'" />
-              </div>
-
-              <div
-                v-show="currentPage === 'savedplayers'"
-                style="
-                  flex: 1;
-                  display: flex;
-                  flex-direction: column;
-                  overflow-y: auto;
-                  min-height: 0;
-                "
-              >
-                <SavedPlayers
-                  v-if="
-                    (hasVisitedSavedPlayers || currentPage === 'savedplayers') &&
-                    !appConfig?.Functions?.HideSavedPlayers
-                  "
-                />
-              </div>
+            <!-- 保活业务页：v-show + 延迟挂载，元数据见 constants/appPages.ts -->
+            <div
+              v-for="page in keepAlivePages"
+              :key="page.key"
+              v-show="currentPage === page.key"
+              class="page-slot"
+            >
+              <component
+                :is="page.component"
+                v-if="shouldMountPage(page.key, page.hiddenWhen)"
+              />
+            </div>
 
               <!-- Home 轻量页面直接 v-if 渲染 -->
               <Home v-if="currentPage === 'home'" @navigate="navigate" />
@@ -971,481 +609,6 @@ async function handleClose() {
   </n-config-provider>
 </template>
 
-<style>
-/* 全局 Naive UI 折叠面板卡片化定制与完美右对齐 */
-.collapse-card {
-  padding: 0 !important;
-  border: 1px solid var(--settings-card-border, var(--border-color)) !important;
-  border-radius: 12px !important;
-  overflow: hidden !important;
-  background: var(--settings-card-bg, var(--card-bg)) !important;
-  margin-bottom: 12px !important; /* 增加卡片底部间距 */
-  box-shadow: var(--shadow-sm) !important;
-}
-.collapse-card .n-collapse-item__header {
-  padding: 16px 24px !important;
-  font-size: 0.88rem !important;
-  font-weight: bold !important;
-  color: var(--text-color) !important;
-  transition: background-color 0.25s !important;
-  display: flex !important;
-  width: 100% !important;
-  box-sizing: border-box !important;
-  justify-content: space-between !important;
-  align-items: center !important;
-}
-.collapse-card .n-collapse-item__header:hover {
-  background-color: var(
-    --settings-card-bg-hover,
-    var(--card-bg-hover)
-  ) !important;
-}
-.collapse-card .n-collapse-item__header-main {
-  flex: 1 !important;
-  display: flex !important;
-  align-items: center !important;
-  width: 100% !important;
-  min-width: 0 !important;
-}
-.collapse-card .n-collapse-item__header-extra {
-  margin-left: auto !important;
-  margin-right: 12px !important;
-  display: none !important; /* 完全隐藏自带的以使手写插槽对齐生效 */
-}
-.collapse-card .n-collapse-item__content {
-  padding: 20px 48px !important;
-  border-top: 1px dashed var(--border-color) !important;
-  background-color: rgba(0, 0, 0, 0.015) !important;
-  width: 100% !important;
-  box-sizing: border-box !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: stretch !important;
-  gap: 8px !important;
-}
-.collapse-card .n-collapse-item__content-inner {
-  width: 100% !important;
-  box-sizing: border-box !important;
-  display: flex !important;
-  flex-direction: column !important;
-  align-items: stretch !important;
-  gap: 8px !important;
-}
-
-.setting-label {
-  flex-shrink: 0 !important;
-  white-space: nowrap !important;
-}
-
-.collapse-card .n-color-picker {
-  width: 100px !important;
-  flex-shrink: 0 !important;
-}
-
-/* 统一的手写头部 flex 排版布局，确保 100% 撑开并右对齐状态文本 */
-.collapse-header-wrapper {
-  display: flex !important;
-  justify-content: space-between !important;
-  align-items: center !important;
-  width: 100% !important;
-  flex: 1 !important;
-  padding-right: 8px !important;
-}
-.collapse-left {
-  display: flex !important;
-  align-items: center !important;
-  gap: 16px !important;
-}
-.collapse-left-simple {
-  display: flex !important;
-  flex-direction: column !important;
-  flex: 1 !important;
-}
-.collapse-right-status {
-  flex-shrink: 0 !important;
-  margin-left: 12px !important;
-  color: var(--primary-color) !important;
-  font-weight: 600 !important;
-}
-
-/* 设置与工具页面中的输入/按钮行右对齐重写 */
-.input-row {
-  display: flex !important;
-  width: 100% !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-  gap: 8px !important;
-}
-/* 1. 外观装饰统一归并 (卡片化底色与内缩边距) */
-.setting-input-row,
-.setting-row,
-.path-actions,
-.color-pickers-row,
-.reset-row,
-.setting-picker-row {
-  background: var(--settings-row-bg) !important;
-  border: 1px solid var(--settings-row-border) !important;
-  padding: 12px 20px !important;
-  border-radius: 8px !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.01) !important;
-  box-sizing: border-box !important;
-  margin-bottom: 0 !important;
-  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-}
-.setting-input-row:hover,
-.setting-row:hover,
-.path-actions:hover,
-.color-pickers-row:hover,
-.reset-row:hover,
-.setting-picker-row:hover {
-  background: var(--settings-row-bg-hover) !important;
-  border-color: var(--settings-row-border-hover) !important;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02) !important;
-  transform: translateY(-0.5px);
-}
-
-/* 2. 布局特性各自保留 */
-.setting-input-row,
-.setting-row {
-  display: flex !important;
-  width: 100% !important;
-  justify-content: space-between !important;
-  align-items: center !important;
-  gap: 16px !important;
-}
-.setting-row.justify-end {
-  justify-content: flex-end !important;
-}
-.path-actions {
-  display: flex !important;
-  width: 100% !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-  gap: 12px !important;
-}
-.color-pickers-row {
-  display: flex !important;
-  width: 100% !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-  gap: 16px !important;
-  flex-wrap: wrap !important;
-}
-.reset-row {
-  display: flex !important;
-  width: 100% !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-}
-.setting-picker-row {
-  display: flex !important;
-  width: 100% !important;
-  justify-content: flex-end !important;
-  align-items: center !important;
-}
-.setting-picker-row .champion-picker {
-  width: 100% !important;
-}
-.setting-picker-row .picker-trigger {
-  justify-content: flex-end !important;
-}
-.setting-picker-row .selected-chips {
-  flex: none !important;
-  display: flex !important;
-  justify-content: flex-end !important;
-}
-
-:root {
-  --primary-color: #00d2c4;
-  --primary-color-hover: #00b3a7;
-  --primary-color-alpha-10: rgba(0, 210, 196, 0.10);
-  --primary-color-alpha-15: rgba(0, 210, 196, 0.15);
-  --primary-color-alpha-20: rgba(0, 210, 196, 0.20);
-  --primary-color-alpha-30: rgba(0, 210, 196, 0.3);
-  --primary-color-alpha-40: rgba(0, 210, 196, 0.4);
-
-  /* 更新弹窗/旧组件使用的变量 → 映射到主页主题变量（惰性解析，自动跟随亮暗色与用户主题色） */
-  --theme-color: var(--primary-color);
-  --bg-card: var(--bg-color);
-  --text-primary: var(--text-color);
-  --text-secondary: var(--text-muted);
-  --text-tertiary: var(--text-dimmed);
-  --bg-secondary: var(--hover-bg);
-  --bg-hover: var(--hover-bg);
-
-  /* 纯白水晶极光主题变量 */
-  --bg-color-gradient: linear-gradient(
-    135deg,
-    #f8fafc 0%,
-    #f1f5f9 50%,
-    #e2e8f0 100%
-  );
-  --bg-color: #f8fafc;
-  --sidebar-bg: rgba(255, 255, 255, 0.75);
-  --card-bg: rgba(255, 255, 255, 0.7);
-  --card-bg-hover: rgba(255, 255, 255, 0.9);
-  --border-color: rgba(0, 0, 0, 0.05);
-  --border-color-hover: rgba(0, 210, 196, 0.25);
-  --hover-bg: rgba(0, 0, 0, 0.03);
-  --hover-bg-strong: rgba(0, 0, 0, 0.06);
-  --titlebar-bg: rgba(255, 255, 255, 0.8);
-
-  --text-color: #0f172a;
-  --text-muted: #475569;
-  --text-dimmed: #64748b;
-
-  --win-color: #065f46;
-  --win-bg: rgba(57, 176, 27, 0.20);
-  --win-bg-hover: rgba(57, 176, 27, 0.32);
-  --win-border: rgba(57, 176, 27, 0.40);
-  --win-glow: rgba(57, 176, 27, 0.10);
-
-  --loss-color: #9f1239;
-  --loss-bg: rgba(211, 25, 12, 0.20);
-  --loss-bg-hover: rgba(211, 25, 12, 0.32);
-  --loss-border: rgba(211, 25, 12, 0.40);
-  --loss-glow: rgba(211, 25, 12, 0.10);
-  --death-color: #f43f5e;
-  --accent-color: #f59e0b;
-  --accent-bg: rgba(245, 158, 11, 0.08);
-  --tier-blue: #3b82f6;
-  --tier-blue-bg: rgba(59, 130, 246, 0.08);
-  --tier-blue-border: rgba(59, 130, 246, 0.15);
-
-  --font-sans:
-    'Outfit', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Arial, sans-serif;
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05), 0 1px 2px rgba(0, 0, 0, 0.02);
-  --shadow-md:
-    0 4px 20px -2px rgba(0, 0, 0, 0.05), 0 2px 8px -1px rgba(0, 0, 0, 0.03);
-  --shadow-lg:
-    0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-  --glass-filter: blur(20px) saturate(190%);
-
-  /* Settings UI 亮色子行卡片变量 */
-  --settings-row-bg: rgba(255, 255, 255, 0.45);
-  --settings-row-bg-hover: rgba(255, 255, 255, 0.75);
-  --settings-row-border: rgba(0, 0, 0, 0.04);
-  --settings-row-border-hover: rgba(0, 0, 0, 0.08);
-}
-
-[data-theme="dark"] {
-  /* 暗黑海克斯水晶主题变量 */
-  --bg-color-gradient: linear-gradient(
-    135deg,
-    #0b0f19 0%,
-    #111827 50%,
-    #172033 100%
-  );
-  --bg-color: #0b0f19;
-  --sidebar-bg: rgba(17, 24, 39, 0.75);
-  --card-bg: rgba(30, 41, 59, 0.55);
-  --card-bg-hover: rgba(30, 41, 59, 0.75);
-  --border-color: rgba(255, 255, 255, 0.06);
-  --border-color-hover: rgba(0, 210, 196, 0.35);
-  --hover-bg: rgba(255, 255, 255, 0.04);
-  --hover-bg-strong: rgba(255, 255, 255, 0.08);
-  --titlebar-bg: rgba(11, 15, 25, 0.8);
-
-  --text-color: #f8fafc;
-  --text-muted: #cbd5e1;
-  --text-dimmed: #94a3b8;
-
-  --win-color: #34d399;
-  --win-bg: rgba(57, 176, 27, 0.20);
-  --win-bg-hover: rgba(57, 176, 27, 0.32);
-  --win-border: rgba(57, 176, 27, 0.40);
-  --win-glow: rgba(57, 176, 27, 0.12);
-
-  --loss-color: #fb7185;
-  --loss-bg: rgba(211, 25, 12, 0.20);
-  --loss-bg-hover: rgba(211, 25, 12, 0.32);
-  --loss-border: rgba(211, 25, 12, 0.40);
-  --loss-glow: rgba(211, 25, 12, 0.12);
-  --death-color: #fb7185;
-  --accent-color: #fbbf24;
-  --accent-bg: rgba(251, 191, 36, 0.12);
-  --tier-blue: #60a5fa;
-  --tier-blue-bg: rgba(96, 165, 250, 0.12);
-  --tier-blue-border: rgba(96, 165, 250, 0.25);
-
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-md:
-    0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
-  --shadow-lg:
-    0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
-  --glass-filter: blur(25px) saturate(200%);
-
-  /* Settings UI 暗色专用 */
-  --toggle-track-off: rgba(255, 255, 255, 0.08);
-  --toggle-slider: #ffffff;
-  --toggle-glow: 0 0 14px rgba(0, 210, 196, 0.4);
-  --segmented-bg: rgba(255, 255, 255, 0.05);
-  --card-glow-hover:
-    0 0 0 1px rgba(0, 210, 196, 0.35), 0 8px 24px rgba(0, 0, 0, 0.4);
-  --settings-card-bg: rgba(24, 34, 54, 0.7);
-  --settings-card-bg-hover: rgba(30, 41, 64, 0.85);
-  --settings-card-border: rgba(255, 255, 255, 0.06);
-  --settings-card-border-hover: rgba(0, 210, 196, 0.4);
-  --settings-collapse-bg: rgba(17, 24, 39, 0.8);
-  --settings-separator: rgba(255, 255, 255, 0.04);
-
-  /* Settings UI 暗色子行卡片变量 */
-  --settings-row-bg: rgba(255, 255, 255, 0.04);
-  --settings-row-bg-hover: rgba(255, 255, 255, 0.08);
-  --settings-row-border: rgba(255, 255, 255, 0.03);
-  --settings-row-border-hover: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme="light"] {
-  /* Settings UI 亮色专用 */
-  --toggle-track-off: rgba(0, 0, 0, 0.1);
-  --toggle-slider: #ffffff;
-  --toggle-glow: 0 0 10px rgba(0, 210, 196, 0.35);
-  --segmented-bg: rgba(0, 0, 0, 0.04);
-  --card-glow-hover:
-    0 0 0 1px rgba(0, 210, 196, 0.3), 0 4px 12px rgba(0, 0, 0, 0.05);
-  --settings-card-bg: rgba(255, 255, 255, 0.8);
-  --settings-card-bg-hover: rgba(255, 255, 255, 0.95);
-  --settings-card-border: rgba(0, 0, 0, 0.06);
-  --settings-card-border-hover: rgba(0, 210, 196, 0.5);
-  --settings-collapse-bg: rgba(243, 244, 246, 0.8);
-  --settings-separator: rgba(0, 0, 0, 0.04);
-
-  /* Settings UI 亮色子行卡片变量 */
-  --settings-row-bg: rgba(255, 255, 255, 0.45);
-  --settings-row-bg-hover: rgba(255, 255, 255, 0.75);
-  --settings-row-border: rgba(0, 0, 0, 0.04);
-  --settings-row-border-hover: rgba(0, 0, 0, 0.08);
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family: var(--font-sans);
-  background-color: var(--bg-color);
-  color: var(--text-color);
-  overflow: hidden;
-  user-select: none;
-}
-
-html[data-mica="true"] body {
-  background-color: transparent !important;
-}
-
-/* 悬浮窗容器：全透明背景，无滚动 */
-.overlay-container {
-  width: 100vw;
-  height: 100vh;
-  background: transparent !important;
-  overflow: hidden;
-}
-
-/* 精致苹果风悬浮滚动条 */
-::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
-}
-[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--primary-color-alpha-30) !important;
-}
-
-/* 性能保障降级策略：非云母模式下使用实色背景，减少 GPU 重绘 */
-:root:not([data-mica="true"]) {
-  --sidebar-bg: #ffffff;
-  --card-bg: #f8fafc;
-  --card-bg-hover: #f1f5f9;
-  --titlebar-bg: #ffffff;
-  --settings-row-bg: #f1f5f9;
-  --settings-row-bg-hover: #e2e8f0;
-  --glass-filter: none;
-}
-[data-theme="dark"]:not([data-mica="true"]) {
-  --sidebar-bg: #111827;
-  --card-bg: #1e293b;
-  --card-bg-hover: #334155;
-  --titlebar-bg: #0b0f19;
-  --settings-row-bg: #1e293b;
-  --settings-row-bg-hover: #334155;
-  --glass-filter: none;
-}
-
-/* 全局 Naive UI 浮动弹出层毛玻璃化与硬件加速 */
-.n-popover,
-.n-dropdown-menu,
-.n-select-menu,
-.n-modal,
-.n-drawer {
-  background-color: var(--card-bg) !important;
-  border: 1px solid var(--border-color) !important;
-  box-shadow: var(--shadow-lg) !important;
-  transform: translateZ(0); /* 开启 GPU 硬件加速 */
-}
-
-/* 如果开启了云母效果，且不是嵌套状态，赋予菜单毛玻璃质感 */
-html[data-mica="true"] .n-popover,
-html[data-mica="true"] .n-dropdown-menu,
-html[data-mica="true"] .n-select-menu,
-html[data-mica="true"] .n-modal,
-html[data-mica="true"] .n-drawer {
-  backdrop-filter: var(--glass-filter, blur(24px) saturate(200%)) !important;
-  -webkit-backdrop-filter: var(--glass-filter, blur(24px) saturate(200%)) !important;
-}
-
-/* 全局输入框聚焦时的呼吸发光高亮 */
-.n-input {
-  transition: border-color 0.25s cubic-bezier(0.25, 0.8, 0.25, 1), 
-              box-shadow 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-}
-.n-input--focus {
-  border-color: var(--primary-color) !important;
-  box-shadow: 0 0 0 3px var(--primary-color-alpha-15) !important;
-}
-
-/* 全局战绩卡片物理上浮微动效 */
-.match-card {
-  transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1), 
-              box-shadow 0.25s cubic-bezier(0.25, 0.8, 0.25, 1),
-              border-color 0.25s, 
-              background-color 0.25s !important;
-}
-.match-card:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md) !important;
-  border-color: var(--primary-color-alpha-30) !important;
-}
-
-/* 战绩卡片鼠标滑过时背景颜色变深，支持动态变量 */
-.match-card.win:hover,
-.mini-match-card.win:hover {
-  background-color: var(--win-bg-hover) !important;
-}
-.match-card.lose:hover,
-.mini-match-card.lose:hover {
-  background-color: var(--loss-bg-hover) !important;
-}
-.match-card.remake:hover,
-.mini-match-card.remake:hover {
-  background-color: var(--remake-bg-hover) !important;
-}
-</style>
-
 <style scoped>
 .app-layout {
   display: flex;
@@ -1463,6 +626,14 @@ html[data-mica="true"] .app-layout {
 .main-row {
   display: flex;
   flex: 1;
+  min-height: 0;
+}
+
+.page-slot {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
   min-height: 0;
 }
 

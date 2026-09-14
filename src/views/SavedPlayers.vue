@@ -11,6 +11,8 @@ import {
   backfillSavedPlayerIdentity,
   exportTaggedPlayersToJsonFile,
   importTaggedPlayersFromJsonFile,
+  autoTagLabel,
+  isGoodAutoTag,
 } from "../api/lcu";
 import type {
   SavedPlayer,
@@ -51,10 +53,6 @@ function profileIconUrl(id: number): string {
 
 function championIconUrl(id: number): string {
   return id > 0 ? `/lol-game-data/assets/v1/champion-icons/${id}.png` : "";
-}
-
-function isGoodAutoTag(tag: string): boolean {
-  return tag === "大腿" || tag === "C位";
 }
 
 function formatTime(ts: number | null): string {
@@ -365,9 +363,9 @@ watch(isConnected, (connected) => {
                 v-if="player.autoTag"
                 class="auto-tag-badge"
                 :class="isGoodAutoTag(player.autoTag) ? 'good' : 'bad'"
-                :title="player.autoReason || player.autoTag"
+                :title="player.autoReason || autoTagLabel(player.autoTag)"
               >
-                {{ player.autoTag }}
+                {{ autoTagLabel(player.autoTag) }}
               </span>
               <span v-if="player.tag" class="tag-badge">{{ player.tag }}</span>
               <span v-if="player.lastQueueType" class="queue-badge">

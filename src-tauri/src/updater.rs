@@ -91,6 +91,7 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
     // 1. 如果有已下载好的待安装更新，直接返回其信息，不用发起网络请求
     {
         let pending = state
+            .updater
             .pending_update
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -102,10 +103,12 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
 
     // 2. 如果后台更新正在下载，则直接返回当前正在下载的更新信息，不用发起网络请求
     if state
+        .updater
         .is_downloading
         .load(std::sync::atomic::Ordering::Relaxed)
     {
         let downloading = state
+            .updater
             .downloading_update
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -150,12 +153,14 @@ pub async fn check_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> 
 pub async fn install_update(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     if state
+        .updater
         .is_downloading
         .load(std::sync::atomic::Ordering::Relaxed)
     {
         return Err("更新正在后台下载中，请稍候...".to_string());
     }
     if state
+        .updater
         .pending_update
         .lock()
         .unwrap_or_else(|e| e.into_inner())
@@ -310,6 +315,7 @@ async fn background_download_update(
     {
         let state = app.state::<AppState>();
         if state
+            .updater
             .is_downloading
             .load(std::sync::atomic::Ordering::Relaxed)
         {
@@ -317,10 +323,12 @@ async fn background_download_update(
             return;
         }
         state
+            .updater
             .is_downloading
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
         let mut downloading = state
+            .updater
             .downloading_update
             .lock()
             .unwrap_or_else(|e| e.into_inner());
@@ -362,10 +370,12 @@ async fn background_download_update(
             log::info!("后台更新下载成功 ({} bytes)", bytes.len());
             let state = app.state::<AppState>();
             state
+                .updater
                 .is_downloading
                 .store(false, std::sync::atomic::Ordering::Relaxed);
 
             let mut downloading = state
+                .updater
                 .downloading_update
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
@@ -373,6 +383,7 @@ async fn background_download_update(
             drop(downloading);
 
             let mut pending = state
+                .updater
                 .pending_update
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
@@ -387,10 +398,12 @@ async fn background_download_update(
             log::warn!("后台更新下载失败: {e}");
             let state = app.state::<AppState>();
             state
+                .updater
                 .is_downloading
                 .store(false, std::sync::atomic::Ordering::Relaxed);
 
             let mut downloading = state
+                .updater
                 .downloading_update
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
@@ -407,9 +420,10 @@ async fn background_download_update(
 pub async fn install_pending_update(app: AppHandle) -> Result<(), String> {
     let state = app.state::<AppState>();
     let pending = state
+        .updater
         .pending_update
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .take()
         .ok_or_else(|| "没有待安装的更新".to_string())?;
 

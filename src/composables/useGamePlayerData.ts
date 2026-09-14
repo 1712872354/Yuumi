@@ -1,5 +1,7 @@
-import { ref, computed, watch, onMounted, type Ref } from "vue";
+import { computed, watch, onMounted, type Ref } from "vue";
+import { storeToRefs } from "pinia";
 import { useLcuStore, type ChampSelectPlayer } from "../store/lcuStore";
+import { useGameInfoStore } from "../store/gameInfoStore";
 import {
   getGameflowPhase,
   getChampSelectSession,
@@ -8,82 +10,58 @@ import {
   lcuRequest,
   fetchConfig,
   fetchPlayerFateInfo,
+  fetchLiveGameTeams,
+  type LiveGamePlayer,
   type MatchDisplay,
   type AppConfig,
 } from "../api/lcu";
 import type {
   PlayerData,
   PremadePlayerLike,
-  StreakInfo,
   ChampSelectSessionLike,
 } from "../types/gameInfo";
 import { resolvePlayerChampionId } from "../types/gameInfo";
 import type {
   GameflowParticipant,
-  GameflowSession,
   RankedQueueEntry,
 } from "../types/lcu";
 import type { SummonerDisplay } from "../api/lcu";
 import { computePremadeColors } from "./usePremadeGroup";
-import { lazySetItem } from "../utils/lazyStorage";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
 import { fetchPlayerMastery, fetchRankedStatsCached } from "./playerMastery";
 import {
   NEW_PLAYER_MAX_LEVEL,
   isIdentityCompatible,
   inheritPlaceholderChampion,
+  setPlayerDataAliases,
+  uniquePlayerEntries,
 } from "./identityUtils";
 import { clearReserveDataFromStorage } from "./reserveData";
+import {
+  shouldWriteReserveData,
+  writeReserveSnapshotToStorage,
+  readReserveSnapshotFromStorage,
+} from "./gameReserveStore";
+import {
+  mapGameflowParticipant,
+  carryChampionFromStaleCell,
+} from "./gameTeamMapping";
+import {
+  fetchSessionCached,
+  invalidateGameflowSessionCache,
+} from "./gameflowSessionCache";
+import { mergeMatchesWithCache } from "./gameMatchesCache";
+import {
+  computeMatchStats,
+  computeStreak,
+  isLikelyBotPlayer,
+} from "./gamePlayerStats";
 
 // ── 向后兼容 re-export（GameInfo.vue 等外部引用路径保持不变）
 export { fetchPlayerMastery } from "./playerMastery";
 export { NEW_PLAYER_MAX_LEVEL, isIdentityCompatible } from "./identityUtils";
 
-// ── gameflow session 短期缓存，避免同一流程中多次请求同一端点
-let cachedSession: { data: GameflowSession; timestamp: number } | null = null;
-const SESSION_CACHE_TTL = 30 * 1000; // 30 秒
 let currentGameflowSessionRequestId = 0; // 用于防并发竞态的请求标识计数器
-
-async function fetchSessionCached(): Promise<GameflowSession | null> {
-  const now = Date.now();
-  if (cachedSession && now - cachedSession.timestamp < SESSION_CACHE_TTL) {
-    return cachedSession.data;
-  }
-  try {
-    const resp = await lcuRequest<GameflowSession>("GET", "/lol-gameflow/v1/session");
-    if (resp.success && resp.data) {
-      cachedSession = { data: resp.data, timestamp: now };
-      return resp.data;
-    }
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
-
-const MATCHES_CACHE_KEY = (puuid: string) => `yuumi_gf_matches_cache_${puuid}`;
-function mergeMatchesWithCache(
-  puuid: string,
-  fresh: MatchDisplay[],
-): MatchDisplay[] {
-  let cached: MatchDisplay[] = [];
-  try {
-    const raw = localStorage.getItem(MATCHES_CACHE_KEY(puuid));
-    if (raw) cached = JSON.parse(raw);
-  } catch {
-    /* ignore */
-  }
-
-  const merged = [...fresh, ...cached]
-    .filter(
-      (m, idx, arr) => arr.findIndex((x) => x.gameId === m.gameId) === idx,
-    )
-    .sort((a, b) => b.timeStamp - a.timeStamp);
-
-  lazySetItem(MATCHES_CACHE_KEY(puuid), merged);
-
-  return merged;
-}
 
 export function useGamePlayerData(
   appConfig: Ref<AppConfig | null>,
@@ -92,84 +70,57 @@ export function useGamePlayerData(
   activeTab: Ref<"my" | "their">,
 ) {
   const store = useLcuStore();
-
-  const loading = ref(false);
-  const error = ref("");
-  const currentSummonerId = ref<number>(0);
-  const currentSummonerPuuid = ref<string>("");
-  const playerData = ref<Record<string | number, PlayerData>>({});
-
-  // 选人阶段我方与敌方队员数据与英雄快照（用于 Loading 阶段继承）
-  const champSelectTeamSnapshot = ref<PremadePlayerLike[]>([]);
-  const champSelectTheirTeamSnapshot = ref<PremadePlayerLike[]>([]);
-
-  const sessionAllyTeam = ref<PremadePlayerLike[]>([]);
-  const sessionEnemyTeam = ref<PremadePlayerLike[]>([]);
-
-  const gameflowMyTeam = ref<PremadePlayerLike[]>([]);
-  const gameflowTheirTeam = ref<PremadePlayerLike[]>([]);
-
-  const currentQueueId = ref<number | null>(null);
-  const isTftMode = ref(false);
-
-  // ── 保留对局数据写入：只要有队伍数据且包含玩家数据就落盘保存对局快照
-  // 当前对局 gameId：InProgress 精简 session 恢复整局时校验落盘快照归属，防串到上一局
-  const currentGameId = ref<number | null>(null);
+  const gameInfo = useGameInfoStore();
+  const {
+    loading,
+    error,
+    currentSummonerId,
+    currentSummonerPuuid,
+    playerData,
+    champSelectTeamSnapshot,
+    champSelectTheirTeamSnapshot,
+    sessionAllyTeam,
+    sessionEnemyTeam,
+    gameflowMyTeam,
+    gameflowTheirTeam,
+    currentQueueId,
+    isTftMode,
+    currentGameId,
+  } = storeToRefs(gameInfo);
 
   function writeReserveData() {
-    const loadedCount = Object.values(playerData.value).filter(
+    // 同一玩家可能以 cellId/summonerId/puuid 三键写入同一对象，按引用去重再计数
+    const loadedCount = uniquePlayerEntries(playerData.value).filter(
       (d) => d.info !== null,
     ).length;
-    if (gameflowMyTeam.value.length === 0 || loadedCount === 0) {
+    if (
+      !shouldWriteReserveData({
+        loadedCount,
+        gamePhase: store.gamePhase,
+        currentGameId: currentGameId.value,
+        myTeamLength: gameflowMyTeam.value.length,
+        theirTeamLength: gameflowTheirTeam.value.length,
+      })
+    ) {
       return;
     }
-    // 防止选人阶段部分加载的数据覆盖上一局更完整的快照：
-    // 真实对局阶段始终写入保证时效性；其余阶段仅在新快照数据规模不缩水时覆盖
-    let savedLoadedCount = 0;
-    try {
-      savedLoadedCount =
-        Number(localStorage.getItem("yuumi_last_game_loaded_count")) || 0;
-    } catch {
-      /* ignore */
-    }
-    const inRealGame =
-      store.gamePhase === "GameStart" || store.gamePhase === "InProgress";
-    if (!inRealGame && loadedCount < savedLoadedCount) {
-      return;
-    }
-    // 同一局内禁止用更瘦的快照覆盖落盘：InProgress 阶段 LCU 会把 gameflow 队伍精简到仅剩自己，
-    // 刷新后残缺 session 回写不得毒化 GameStart 时落盘的完整快照
-    const currentTotal = gameflowMyTeam.value.length + gameflowTheirTeam.value.length;
-    if (currentGameId.value) {
-      let savedGameId = 0;
-      let savedTotal = 0;
-      try {
-        savedGameId = Number(localStorage.getItem("yuumi_last_game_id")) || 0;
-        savedTotal = Number(localStorage.getItem("yuumi_last_game_team_count")) || 0;
-      } catch {
-        /* ignore */
-      }
-      if (savedGameId === currentGameId.value && savedTotal > 0 && currentTotal < savedTotal) {
-        return;
-      }
-    }
-    lazySetItem("yuumi_last_game_player_data", playerData.value);
-    lazySetItem("yuumi_last_gameflow_my_team", gameflowMyTeam.value);
-    lazySetItem("yuumi_last_gameflow_their_team", gameflowTheirTeam.value);
-    lazySetItem("yuumi_last_premade_colors_my", premadeColorsMy.value);
-    lazySetItem("yuumi_last_premade_colors_their", premadeColorsTheir.value);
-    lazySetItem("yuumi_last_game_loaded_count", loadedCount);
-    if (currentGameId.value) {
-      lazySetItem("yuumi_last_game_id", currentGameId.value);
-      lazySetItem("yuumi_last_game_team_count", currentTotal);
-    }
+    writeReserveSnapshotToStorage({
+      playerData: playerData.value,
+      myTeam: gameflowMyTeam.value,
+      theirTeam: gameflowTheirTeam.value,
+      premadeColorsMy: premadeColorsMy.value,
+      premadeColorsTheir: premadeColorsTheir.value,
+      loadedCount,
+      gameId: currentGameId.value,
+    });
   }
 
   // ── 从 localStorage 恢复保留数据（有数据即恢复，直到新对局开始）
   let isBackfillingMasteries = false;
   function backfillMissingMasteries() {
     if (isBackfillingMasteries) return;
-    const entries = Object.values(playerData.value);
+    // 按引用去重，避免多键别名导致同一玩家被重复 backfill
+    const entries = uniquePlayerEntries(playerData.value);
     const needBackfill = entries.filter(
       (e) =>
         e &&
@@ -212,54 +163,29 @@ export function useGamePlayerData(
 
   function restoreReserveDataFromLocalStorage(): boolean {
     try {
-      const savedMyTeam = localStorage.getItem("yuumi_last_gameflow_my_team");
-      const savedTheirTeam = localStorage.getItem(
-        "yuumi_last_gameflow_their_team",
-      );
-      const savedPlayerData = localStorage.getItem("yuumi_last_game_player_data");
-      const savedPremadeMy = localStorage.getItem("yuumi_last_premade_colors_my");
-      const savedPremadeTheir = localStorage.getItem("yuumi_last_premade_colors_their");
+      const snap = readReserveSnapshotFromStorage();
       let hasRestored = false;
-      if (savedMyTeam) {
-        const parsed = JSON.parse(savedMyTeam);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          gameflowMyTeam.value = parsed;
-          hasRestored = true;
-        }
+      if (snap.myTeam) {
+        gameflowMyTeam.value = snap.myTeam;
+        hasRestored = true;
       }
-      if (savedTheirTeam) {
-        const parsed = JSON.parse(savedTheirTeam);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          gameflowTheirTeam.value = parsed;
-          hasRestored = true;
-        }
+      if (snap.theirTeam) {
+        gameflowTheirTeam.value = snap.theirTeam;
+        hasRestored = true;
       }
-      if (savedPlayerData) {
-        const parsed = JSON.parse(savedPlayerData);
-        if (parsed && Object.keys(parsed).length > 0) {
-          playerData.value = parsed;
-          hasRestored = true;
-          // 异步检查并补齐缺少熟练度的玩家（例如旧版本保留的数据）
-          backfillMissingMasteries();
-        }
+      if (snap.playerData) {
+        playerData.value = snap.playerData;
+        hasRestored = true;
+        // 异步检查并补齐缺少熟练度的玩家（例如旧版本保留的数据）
+        backfillMissingMasteries();
       }
-      if (savedPremadeMy) {
-        try {
-          premadeColorsMy.value = JSON.parse(savedPremadeMy);
-        } catch {
-          if (gameflowMyTeam.value.length > 0)
-            premadeColorsMy.value = computePremadeColors(gameflowMyTeam.value);
-        }
+      if (snap.premadeColorsMy) {
+        premadeColorsMy.value = snap.premadeColorsMy;
       } else if (gameflowMyTeam.value.length > 0) {
         premadeColorsMy.value = computePremadeColors(gameflowMyTeam.value);
       }
-      if (savedPremadeTheir) {
-        try {
-          premadeColorsTheir.value = JSON.parse(savedPremadeTheir);
-        } catch {
-          if (gameflowTheirTeam.value.length > 0)
-            premadeColorsTheir.value = computePremadeColors(gameflowTheirTeam.value);
-        }
+      if (snap.premadeColorsTheir) {
+        premadeColorsTheir.value = snap.premadeColorsTheir;
       } else if (gameflowTheirTeam.value.length > 0) {
         premadeColorsTheir.value = computePremadeColors(gameflowTheirTeam.value);
       }
@@ -471,9 +397,11 @@ export function useGamePlayerData(
       return isIdentityCompatible(e, incoming);
     });
     if (reusable) {
-      playerData.value[cellId] = reusable;
-      if (realSummonerId) playerData.value[realSummonerId] = reusable;
-      if (playerPuuid) playerData.value[playerPuuid] = reusable;
+      setPlayerDataAliases(playerData.value, reusable, {
+        cellId,
+        summonerId: realSummonerId,
+        puuid: playerPuuid,
+      });
 
       // 如果复用的条目缺少熟练度（如旧版缓存或部分加载异常），后台静默异步补填
       if ((!reusable.masteries || reusable.masteries.length === 0) && (playerPuuid || realSummonerId)) {
@@ -498,16 +426,17 @@ export function useGamePlayerData(
     // 无可复用的同身份已加载项，继续往下加载真实数据
 
     // 机器人/电脑玩家本地极速识别，无需请求 LCU API，避免 404 和延迟
-    // （含自定义对局人机 isHumanoid，其 bot 标记在 ChampSelect 快照合并时补齐，
-    //  此处直接识别 isHumanoid 以覆盖 computed/快照尚未就绪的窗口期）
-    const isBotPlayer =
-      Boolean(fallbackPlayer?.bot) ||
-      Boolean(fallbackPlayer?.isBot) ||
-      Boolean((fallbackPlayer as PremadePlayerLike & { isHumanoid?: boolean })?.isHumanoid) ||
-      Boolean(fallbackPlayer?.botChampionId) ||
-      Boolean(fallbackPlayer?.displayName?.includes("电脑")) ||
-      Boolean(fallbackPlayer?.summonerName?.includes("电脑")) ||
-      (!realSummonerId && !playerPuuid && Boolean(fallbackPlayer?.displayName || fallbackPlayer?.summonerName));
+    const isBotPlayer = isLikelyBotPlayer({
+      fallbackBot: fallbackPlayer?.bot,
+      fallbackIsBot: fallbackPlayer?.isBot,
+      isHumanoid: (fallbackPlayer as PremadePlayerLike & { isHumanoid?: boolean })
+        ?.isHumanoid,
+      botChampionId: fallbackPlayer?.botChampionId,
+      displayName: fallbackPlayer?.displayName,
+      summonerName: fallbackPlayer?.summonerName,
+      realSummonerId,
+      playerPuuid,
+    });
 
     if (isBotPlayer && fallbackPlayer) {
       const botName =
@@ -539,9 +468,11 @@ export function useGamePlayerData(
         matchHistoryHidden: true,
         championId: fallbackPlayer.championId || fallbackPlayer.botChampionId || 0,
       };
-      playerData.value[cellId] = botDataObj;
-      if (realSummonerId) playerData.value[realSummonerId] = botDataObj;
-      if (playerPuuid) playerData.value[playerPuuid] = botDataObj;
+      setPlayerDataAliases(playerData.value, botDataObj, {
+        cellId,
+        summonerId: realSummonerId,
+        puuid: playerPuuid,
+      });
       debouncedSavePlayerData();
       return;
     }
@@ -717,60 +648,15 @@ export function useGamePlayerData(
       let winRate: number | undefined = undefined;
       let winCount: number | undefined = undefined;
       let lossesCount: number | undefined = undefined;
-
-      if (matches && matches.length > 0) {
-        let totalKills = 0;
-        let totalDeaths = 0;
-        let totalAssists = 0;
-        let remakeCount = 0;
-        let currentWinCount = 0;
-        let currentLossesCount = 0;
-
-        matches.forEach((m: MatchDisplay) => {
-          if (m.remake) {
-            remakeCount++;
-          } else {
-            totalKills += m.kills ?? 0;
-            totalDeaths += m.deaths ?? 0;
-            totalAssists += m.assists ?? 0;
-            if (m.win) {
-              currentWinCount++;
-            } else {
-              currentLossesCount++;
-            }
-          }
-        });
-
-        winCount = currentWinCount;
-        lossesCount = currentLossesCount;
-        const validMatches = matches.length - remakeCount;
-        winRate =
-          validMatches > 0 ? Math.round((currentWinCount / validMatches) * 100) : 0;
-        const deathsForCalc = totalDeaths === 0 ? 1 : totalDeaths;
-        avgKda = (totalKills + totalAssists) / deathsForCalc;
+      {
+        const stats = computeMatchStats(matches);
+        avgKda = stats.avgKda;
+        winRate = stats.winRate;
+        winCount = stats.winCount;
+        lossesCount = stats.lossesCount;
       }
 
-      let streak: StreakInfo | null = null;
-      if (matches && matches.length > 0) {
-        const validStreakMatches = matches.filter((m) => !m.remake);
-        if (validStreakMatches.length > 0) {
-          const firstWin = validStreakMatches[0].win;
-          let count = 0;
-          for (const m of validStreakMatches) {
-            if (m.win === firstWin) {
-              count++;
-            } else {
-              break;
-            }
-          }
-          if (count >= 2) {
-            streak = {
-              type: firstWin ? "win" : "loss",
-              count,
-            };
-          }
-        }
-      }
+      const streak = computeStreak(matches);
 
       let fateFlag: "ally" | "enemy" | null = null;
       let recentlyChampionName = "";
@@ -787,7 +673,8 @@ export function useGamePlayerData(
             recentlyChampionName = fateInfo.recentlyChampionName || "";
           }
         } catch (e) {
-          console.error("宿命检测失败:", e);
+          // 进行中 LCU match-history 不可用时宿命检测会失败，不影响身份与战绩列表展示
+          console.debug("宿命检测失败:", e);
         }
       }
 
@@ -807,13 +694,11 @@ export function useGamePlayerData(
         masteries: masteryData,
         streak,
       };
-      playerData.value[cellId] = dataObj;
-      if (summonerId && summonerId !== cellId) {
-        playerData.value[summonerId] = dataObj;
-      }
-      if (safeInfo.puuid) {
-        playerData.value[safeInfo.puuid] = dataObj;
-      }
+      setPlayerDataAliases(playerData.value, dataObj, {
+        cellId,
+        summonerId,
+        puuid: safeInfo.puuid || undefined,
+      });
       debouncedSavePlayerData();
     } catch {
       const existingInfo =
@@ -829,13 +714,11 @@ export function useGamePlayerData(
         // 异常兜底也保留所选英雄，不留空白列
         championId: resolveCarryChampionId(fallbackPlayer, cellId),
       };
-      playerData.value[cellId] = dataObj;
-      if (summonerId && summonerId !== cellId) {
-        playerData.value[summonerId] = dataObj;
-      }
-      if (playerPuuid) {
-        playerData.value[playerPuuid] = dataObj;
-      }
+      setPlayerDataAliases(playerData.value, dataObj, {
+        cellId,
+        summonerId,
+        puuid: playerPuuid,
+      });
     }
   }
 
@@ -896,6 +779,202 @@ export function useGamePlayerData(
       });
   }
 
+  function hasPlayerIdentity(p: PremadePlayerLike): boolean {
+    return Boolean(
+      p.puuid || p.summonerId || p.displayName || p.gameName || p.summonerName,
+    );
+  }
+
+  /**
+   * 合并队伍快照：InProgress 下 LCU 可能下发同人数但无身份的“脱敏”列表，
+   * 不得用它覆盖选人阶段/保留快照里已识别的玩家；人数更短时保留已有更全数据。
+   */
+  function mergeTeamPreservingIdentity(
+    incoming: PremadePlayerLike[],
+    existing: PremadePlayerLike[],
+  ): PremadePlayerLike[] {
+    if (incoming.length === 0) return existing;
+    if (existing.length === 0) return incoming;
+    if (incoming.length < existing.length) return existing;
+
+    const incomingIdentified = incoming.filter(hasPlayerIdentity).length;
+    const existingIdentified = existing.filter(hasPlayerIdentity).length;
+    if (incomingIdentified === 0 && existingIdentified > 0) {
+      console.debug(
+        `[GameInfo] InProgress session 无身份信息，保留已有 ${existingIdentified} 名已识别玩家`,
+      );
+      return existing;
+    }
+
+    return incoming.map((p, idx) => {
+      if (hasPlayerIdentity(p)) return p;
+      const prev =
+        existing.find(
+          (old) =>
+            (p.puuid && old.puuid === p.puuid) ||
+            (p.summonerId && old.summonerId === p.summonerId) ||
+            (old.cellId !== undefined && old.cellId === p.cellId && hasPlayerIdentity(old)),
+        ) || existing[idx];
+      if (!prev) return p;
+      return {
+        ...prev,
+        championId: p.championId || prev.championId,
+        cellId: p.cellId ?? prev.cellId,
+      };
+    });
+  }
+
+  function livePlayerToPremade(
+    p: LiveGamePlayer,
+    offset: number,
+    idx: number,
+  ): PremadePlayerLike {
+    const name = p.gameName
+      ? p.tagLine
+        ? `${p.gameName}#${p.tagLine}`
+        : p.gameName
+      : p.summonerName || "";
+    return {
+      summonerId: p.summonerId || undefined,
+      puuid: p.puuid || undefined,
+      gameName: p.gameName || undefined,
+      tagLine: p.tagLine || undefined,
+      displayName: name,
+      summonerName: p.summonerName || undefined,
+      championId: p.championId,
+      profileIconId: p.profileIconId || undefined,
+      cellId: offset + idx,
+      bot: false,
+      isBot: false,
+    };
+  }
+
+  /** InProgress 下前端 session 残缺时，用 Rust 解析的 live teams 兜底补齐对面 */
+  async function tryLiveTeamsFallback() {
+    if (store.gamePhase !== "InProgress" && store.gamePhase !== "GameStart") {
+      return;
+    }
+    const enemyIdentified = gameflowTheirTeam.value.filter(hasPlayerIdentity).length;
+    if (enemyIdentified > 0) return;
+    try {
+      const live = await fetchLiveGameTeams();
+      if (!live || live.theirTeam.length === 0) {
+        console.debug("[GameInfo] live teams 兜底无敌方数据");
+        return;
+      }
+      const mappedMy = live.myTeam.map((p, i) => livePlayerToPremade(p, 0, i));
+      const mappedTheir = live.theirTeam.map((p, i) =>
+        livePlayerToPremade(p, 5, i),
+      );
+      gameflowMyTeam.value = mergeTeamPreservingIdentity(
+        mappedMy,
+        gameflowMyTeam.value,
+      );
+      gameflowTheirTeam.value = mergeTeamPreservingIdentity(
+        mappedTheir,
+        gameflowTheirTeam.value,
+      );
+      if (live.gameId != null) currentGameId.value = live.gameId;
+      console.debug(
+        `[GameInfo] live teams 兜底: my=${gameflowMyTeam.value.length} their=${gameflowTheirTeam.value.length}`,
+      );
+      // DevTools 里方便确认是否真正写入了 Pinia
+      console.log("[GameInfo] live teams applied", {
+        my: gameflowMyTeam.value.map((p) => p.displayName || p.puuid || p.summonerId),
+        their: gameflowTheirTeam.value.map((p) => p.displayName || p.puuid || p.summonerId),
+      });
+      // 重新播种占位并拉取战绩
+      seedInitialPlayerData(gameflowMyTeam.value);
+      seedInitialPlayerData(gameflowTheirTeam.value);
+      premadeColorsMy.value = computePremadeColors(gameflowMyTeam.value);
+      premadeColorsTheir.value = computePremadeColors(gameflowTheirTeam.value);
+      const load = (team: PremadePlayerLike[]) =>
+        runWithConcurrency(team, 3, (p) =>
+          loadPlayerData(p.cellId ?? 0, p.summonerId ?? 0, p.puuid, p),
+        );
+      void load(gameflowMyTeam.value).catch(() => {});
+      void load(gameflowTheirTeam.value)
+        .then(() => writeReserveData())
+        .catch(() => writeReserveData());
+    } catch (e) {
+      console.warn("[GameInfo] live teams 兜底失败:", e);
+    }
+  }
+
+  /** 为双方队员预填充基础占位，避免后台异步请求完成前界面出现空白 */
+  function seedInitialPlayerData(players: PremadePlayerLike[]) {
+    for (const p of players) {
+      const key = p.cellId ?? 0;
+      const isBot = Boolean(p.bot || p.isBot || p.botChampionId);
+      const byPuuid = p.puuid ? playerData.value[p.puuid] : undefined;
+      const bySid = p.summonerId ? playerData.value[p.summonerId] : undefined;
+      const byCell = playerData.value[key];
+      const incoming = { puuid: p.puuid, summonerId: p.summonerId, cellId: key };
+      const existing = [byPuuid, bySid, byCell].find((e) =>
+        isIdentityCompatible(e, incoming),
+      );
+      if (existing) {
+        if (p.championId && p.championId > 0) {
+          existing.championId = p.championId;
+        }
+        setPlayerDataAliases(playerData.value, existing, {
+          cellId: key,
+          summonerId: p.summonerId,
+          puuid: p.puuid,
+        });
+        continue;
+      }
+      if (byCell) {
+        if (!p.championId || p.championId <= 0) {
+          p.championId = carryChampionFromStaleCell(byCell, key, p.championId);
+        }
+        delete playerData.value[key];
+      }
+      if (!playerData.value[key]) {
+        const fallbackName =
+          p.displayName ||
+          p.gameName ||
+          p.summonerName ||
+          (isBot ? "电脑" : `玩家${key + 1}`);
+        const iconId = p.profileIconId ?? 29;
+        const placeholder: PlayerData = {
+          info: {
+            accountId: 0,
+            summonerId: p.summonerId ?? 0,
+            puuid: p.puuid ?? "",
+            displayName: fallbackName,
+            gameName: p.gameName || fallbackName,
+            tagLine: p.tagLine || "",
+            profileIconId: iconId,
+            profileIconUrl: `/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`,
+            summonerLevel: 0,
+            percentCompleteForNextLevel: 0,
+            xpSinceLastLevel: 0,
+            xpUntilNextLevel: 0,
+          },
+          matches: [],
+          ranked: { solo: null, flex: null },
+          loading: !isBot,
+          matchHistoryHidden: isBot,
+          championId: p.championId,
+        };
+        playerData.value[key] = placeholder;
+      }
+      if (p.summonerId && p.summonerId !== key && !playerData.value[p.summonerId]) {
+        const existingSid = playerData.value[key]?.info?.summonerId;
+        if (!existingSid || existingSid === p.summonerId || existingSid === key) {
+          playerData.value[p.summonerId] = playerData.value[key];
+        }
+      }
+      if (p.puuid && !playerData.value[p.puuid]) {
+        const existingPuuid = playerData.value[key]?.info?.puuid;
+        if (!existingPuuid || existingPuuid === p.puuid) {
+          playerData.value[p.puuid] = playerData.value[key];
+        }
+      }
+    }
+  }
+
   async function processTeamData(
     teamOne: GameflowParticipant[],
     teamTwo: GameflowParticipant[],
@@ -950,199 +1029,54 @@ export function useGamePlayerData(
           (p.summonerId ? playerData.value[p.summonerId] : undefined) ||
           (p.puuid ? playerData.value[p.puuid] : undefined);
         if (sourceData) {
-          if (p.cellId !== undefined) playerData.value[p.cellId] = sourceData;
-          if (p.summonerId) playerData.value[p.summonerId] = sourceData;
-          if (p.puuid) playerData.value[p.puuid] = sourceData;
+          setPlayerDataAliases(playerData.value, sourceData, {
+            cellId: p.cellId,
+            summonerId: p.summonerId,
+            puuid: p.puuid,
+          });
         }
       }
     }
 
+    const mappingCtx = {
+      champSelectTeamSnapshot: champSelectTeamSnapshot.value,
+      champSelectTheirTeamSnapshot: champSelectTheirTeamSnapshot.value,
+      gameflowMyTeam: gameflowMyTeam.value,
+      gameflowTheirTeam: gameflowTheirTeam.value,
+      playerData: playerData.value,
+    };
     const mapParticipant = (
       p: GameflowParticipant,
       idx: number,
       offset: number,
       isEnemy: boolean,
-    ): PremadePlayerLike => {
-      const resolvedName =
-        p.gameName
-          ? p.tagLine
-            ? `${p.gameName}#${p.tagLine}`
-            : p.gameName
-          : p.summonerName ||
-            p.displayName ||
-            p.botName ||
-            (p.bot || p.isBot ? "电脑" : "");
-      // 为敌我双方生成互不碰撞的稳定 cellId：我方 0..4，敌方 5..9
-      const stableCellId = offset + idx;
-
-      // 尝试从选人快照中继承已选英雄和已有数据
-      let resolvedChampId = p.championId ?? p.botChampionId ?? 0;
-      let profileIconId = p.profileIconId;
-      const targetSnapshot = isEnemy
-        ? champSelectTheirTeamSnapshot.value
-        : champSelectTeamSnapshot.value;
-      const snap = targetSnapshot.find(
-        (cs) =>
-          (p.puuid && cs.puuid && cs.puuid === p.puuid) ||
-          (p.summonerId && cs.summonerId && cs.summonerId === p.summonerId) ||
-          (p.summonerName && cs.displayName && cs.displayName === p.summonerName) ||
-          (p.gameName && cs.gameName && cs.gameName === p.gameName) ||
-          (p.displayName && cs.displayName && cs.displayName === p.displayName) ||
-          (cs.cellId !== undefined && cs.cellId === idx) ||
-          (cs.cellId !== undefined && cs.cellId === stableCellId),
-      ) || targetSnapshot[idx];
-      if (snap) {
-        if (!resolvedChampId || resolvedChampId <= 0) {
-          resolvedChampId = snap.championId ?? snap.championPickIntent ?? 0;
-        }
-        if (!profileIconId && snap.profileIconId) {
-          profileIconId = snap.profileIconId;
-        }
-      }
-      // 若仍未解析到英雄 ID，尝试直接用下标对齐的快照兜底
-      if ((!resolvedChampId || resolvedChampId <= 0) && targetSnapshot[idx]) {
-        resolvedChampId =
-          targetSnapshot[idx].championId ??
-          targetSnapshot[idx].championPickIntent ??
-          0;
-      }
-      // 最终兜底：从当前已渲染的队伍数据中找同一玩家的 championId
-      // 这解决 InProgress 阶段 gameflow session 不再携带 championId 导致覆盖 GameStart 时有效值的问题
-      if (!resolvedChampId || resolvedChampId <= 0) {
-        const prevTeam = isEnemy ? gameflowTheirTeam.value : gameflowMyTeam.value;
-        const prevPlayer = prevTeam.find(
-          (pp) =>
-            (p.puuid && pp.puuid && pp.puuid === p.puuid) ||
-            (p.summonerId && pp.summonerId && pp.summonerId === p.summonerId) ||
-            pp.cellId === stableCellId,
-        );
-        if (prevPlayer?.championId && prevPlayer.championId > 0) {
-          resolvedChampId = prevPlayer.championId;
-        }
-      }
-      // 同样从 playerData 里找已有的 championId
-      if (!resolvedChampId || resolvedChampId <= 0) {
-        const pd =
-          (p.puuid ? playerData.value[p.puuid] : undefined) ||
-          (p.summonerId ? playerData.value[p.summonerId] : undefined) ||
-          playerData.value[stableCellId];
-        if (pd?.championId && pd.championId > 0) {
-          resolvedChampId = pd.championId;
-        }
-      }
-
-      return {
-        ...p,
-        cellId: stableCellId,
-        championId: resolvedChampId,
-        summonerId: p.summonerId,
-        puuid: p.puuid,
-        gameName: p.gameName,
-        tagLine: p.tagLine,
-        profileIconId,
-        displayName: resolvedName,
-        bot: Boolean(p.bot || p.isBot),
-        isBot: Boolean(p.bot || p.isBot),
-      };
-    };
+    ): PremadePlayerLike =>
+      mapGameflowParticipant(p, idx, offset, isEnemy, mappingCtx);
 
     const mappedMy = allyTeam.map((p, idx) => mapParticipant(p, idx, 0, false));
     const mappedTheir = enemyTeam.map((p, idx) =>
       mapParticipant(p, idx, 5, true),
     );
-    // LCU 会话偶发残缺（如加载瞬间有人尚未连入）：新队伍更短时保留已有更全的，
-    // 不让整列消失；人数补齐后由 gameflowSession 监听触发重处理
-    if (mappedMy.length >= gameflowMyTeam.value.length) {
-      gameflowMyTeam.value = mappedMy;
-    } else {
-      console.debug(`[GameInfo] 忽略残缺队伍快照: 我方新 ${mappedMy.length} 人 / 已有 ${gameflowMyTeam.value.length} 人`);
+    // 合并时保留身份：避免 InProgress 脱敏 session 用空身份覆盖选人/快照数据
+    gameflowMyTeam.value = mergeTeamPreservingIdentity(
+      mappedMy,
+      gameflowMyTeam.value,
+    );
+    gameflowTheirTeam.value = mergeTeamPreservingIdentity(
+      mappedTheir,
+      gameflowTheirTeam.value,
+    );
+    if (mappedMy.length < gameflowMyTeam.value.length) {
+      console.debug(
+        `[GameInfo] 忽略残缺队伍快照: 我方新 ${mappedMy.length} 人 / 已有 ${gameflowMyTeam.value.length} 人`,
+      );
     }
-    if (mappedTheir.length >= gameflowTheirTeam.value.length) {
-      gameflowTheirTeam.value = mappedTheir;
-    } else {
-      console.debug(`[GameInfo] 忽略残缺队伍快照: 敌方新 ${mappedTheir.length} 人 / 已有 ${gameflowTheirTeam.value.length} 人`);
+    if (mappedTheir.length < gameflowTheirTeam.value.length) {
+      console.debug(
+        `[GameInfo] 忽略残缺队伍快照: 敌方新 ${mappedTheir.length} 人 / 已有 ${gameflowTheirTeam.value.length} 人`,
+      );
     }
 
-    // 为双方队员预填充基础占位，避免后台异步请求完成前界面出现空白
-    const seedInitialPlayerData = (players: PremadePlayerLike[]) => {
-      for (const p of players) {
-        const key = p.cellId ?? 0;
-        const isBot = Boolean(p.bot || p.isBot || p.botChampionId);
-        // 如果已有选人阶段完整加载的数据，保留并继承。
-        // 身份优先查找：puuid → summonerId → cellId。选人/对局顺序变化时同 cell 槽
-        // 可能残留异队旧数据，身份键优先才能命中同一玩家的已加载项，避免误杀重拉
-        const byPuuid = p.puuid ? playerData.value[p.puuid] : undefined;
-        const bySid = p.summonerId ? playerData.value[p.summonerId] : undefined;
-        const byCell = playerData.value[key];
-        const incoming = { puuid: p.puuid, summonerId: p.summonerId, cellId: key };
-        const existing = [byPuuid, bySid, byCell].find((e) =>
-          isIdentityCompatible(e, incoming),
-        );
-        if (existing) {
-          // 若 gameflow 带来了新的 championId（加载中阶段可获取），始终更新
-          if (p.championId && p.championId > 0) {
-            existing.championId = p.championId;
-          }
-          playerData.value[key] = existing;
-          if (p.summonerId) playerData.value[p.summonerId] = existing;
-          if (p.puuid) playerData.value[p.puuid] = existing;
-          continue;
-        }
-        // cell 槽被异队旧数据占据：清槽后按新身份重建，避免把我方 info/matches 挂到敌方 key 上。
-        // 若被清的是无身份占位且带有英雄 ID，先继承给 p，保证加载中英雄不断档
-        if (byCell) {
-          if (!p.championId || p.championId <= 0) {
-            const carried = inheritPlaceholderChampion(byCell, key);
-            if (carried > 0) p.championId = carried;
-          }
-          delete playerData.value[key];
-        }
-        if (!playerData.value[key]) {
-          const fallbackName =
-            p.displayName ||
-            p.gameName ||
-            p.summonerName ||
-            (isBot ? "电脑" : `玩家${key + 1}`);
-          const iconId = p.profileIconId ?? 29;
-          const placeholder: PlayerData = {
-            info: {
-              accountId: 0,
-              summonerId: p.summonerId ?? 0,
-              puuid: p.puuid ?? "",
-              displayName: fallbackName,
-              gameName: p.gameName || fallbackName,
-              tagLine: p.tagLine || "",
-              profileIconId: iconId,
-              profileIconUrl: `/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`,
-              summonerLevel: 0,
-              percentCompleteForNextLevel: 0,
-              xpSinceLastLevel: 0,
-              xpUntilNextLevel: 0,
-            },
-            matches: [],
-            ranked: { solo: null, flex: null },
-            loading: !isBot,
-            matchHistoryHidden: isBot,
-            championId: p.championId,
-          };
-          playerData.value[key] = placeholder;
-        }
-        if (p.summonerId && p.summonerId !== key && !playerData.value[p.summonerId]) {
-          // 防止选人阶段占位数据（cellId 充当 summonerId）污染真实 summonerId 键
-          const existingSid = playerData.value[key]?.info?.summonerId;
-          if (!existingSid || existingSid === p.summonerId || existingSid === key) {
-            playerData.value[p.summonerId] = playerData.value[key];
-          }
-        }
-        if (p.puuid && !playerData.value[p.puuid]) {
-          // 防止选人阶段空 puuid 占位数据污染真实 puuid 键
-          const existingPuuid = playerData.value[key]?.info?.puuid;
-          if (!existingPuuid || existingPuuid === p.puuid) {
-            playerData.value[p.puuid] = playerData.value[key];
-          }
-        }
-      }
-    };
     seedInitialPlayerData(gameflowMyTeam.value);
     seedInitialPlayerData(gameflowTheirTeam.value);
 
@@ -1162,19 +1096,21 @@ export function useGamePlayerData(
       );
 
     // 优先启动可见队，紧随其后启动后台队，全部完成后写盘落盘
-    loadTeam(visible)
-      .catch((e) => console.debug("[GameInfo] 队伍数据加载异常:", e));
+    loadTeam(visible).catch((e) =>
+      console.debug("[GameInfo] 队伍数据加载异常:", e),
+    );
 
     loadTeam(background)
       .then(() => {
-        // 双方 10 人信息加载完毕，立即保存完整对局
         writeReserveData();
       })
       .catch((err) => {
         console.debug("[GameInfo] 队伍数据预加载失败:", err);
-        // 异常兜底，只要队伍齐备也保存
         writeReserveData();
       });
+
+    // 敌方仍无有效身份时，用 Rust live teams 兜底（中途开局 / session 脱敏）
+    void tryLiveTeamsFallback();
   }
 
   async function loadFromGameflowSession() {
@@ -1183,7 +1119,7 @@ export function useGamePlayerData(
 
     const reqId = ++currentGameflowSessionRequestId;
 
-    cachedSession = null;
+    invalidateGameflowSessionCache();
     await updateCurrentQueueId();
     if (isTftMode.value) {
       gameflowMyTeam.value = [];
@@ -1226,18 +1162,29 @@ export function useGamePlayerData(
       // 先从快照恢复整局数据，后续逻辑中的长度守卫与 identity 合并会保留更全的数据，防止敌方丢失
       const sessionTotal = t1.length + t2.length;
       const isCustomGame = data.gameData.queue?.isCustom === true;
-      if (liveGameId && !isCustomGame) {
+      // 敌方列为空时优先尝试恢复保留快照（同 gameId 或近期已加载的完整对局），
+      // 避免 InProgress 下 LCU 只下发我方导致对面整列空白
+      const needsEnemyRestore = gameflowTheirTeam.value.length === 0;
+      if (!isCustomGame && (liveGameId || needsEnemyRestore)) {
         try {
           const savedId = Number(localStorage.getItem("yuumi_last_game_id")) || 0;
           const savedTotal = Number(localStorage.getItem("yuumi_last_game_team_count")) || 0;
           const currentTotal = gameflowMyTeam.value.length + gameflowTheirTeam.value.length;
-          if (
-            savedId === liveGameId &&
-            (currentTotal === 0 ||
-              gameflowTheirTeam.value.length === 0 ||
-              (savedTotal > 0 && (sessionTotal < savedTotal || currentTotal < savedTotal)))
-          ) {
-            restoreReserveDataFromLocalStorage();
+          const sameGame = liveGameId != null && savedId === liveGameId;
+          // 同局或（无 gameId 时）有完整 10 人快照且当前敌方缺失
+          const canRestore =
+            (sameGame &&
+              (currentTotal === 0 ||
+                gameflowTheirTeam.value.length === 0 ||
+                (savedTotal > 0 && (sessionTotal < savedTotal || currentTotal < savedTotal)))) ||
+            (!liveGameId && needsEnemyRestore && savedTotal >= 10);
+          if (canRestore) {
+            const restored = restoreReserveDataFromLocalStorage();
+            if (restored) {
+              console.debug(
+                `[GameInfo] 已从保留快照恢复队伍: my=${gameflowMyTeam.value.length} their=${gameflowTheirTeam.value.length}`,
+              );
+            }
           }
         } catch {
           /* ignore */
@@ -1256,7 +1203,7 @@ export function useGamePlayerData(
             loading.value = false;
             return;
           }
-          cachedSession = null;
+          invalidateGameflowSessionCache();
           const retryData = await fetchSessionCached();
           if (reqId !== currentGameflowSessionRequestId) return;
           const rt = retryData?.gameData;
@@ -1302,7 +1249,7 @@ export function useGamePlayerData(
             loading.value = false;
             return;
           }
-          cachedSession = null;
+          invalidateGameflowSessionCache();
           const retryData = await fetchSessionCached();
           if (reqId !== currentGameflowSessionRequestId) return;
           const rt = retryData?.gameData;
@@ -1323,6 +1270,7 @@ export function useGamePlayerData(
 
       if (reqId !== currentGameflowSessionRequestId) return;
       await processTeamData(t1, t2);
+      void tryLiveTeamsFallback();
     } catch (e) {
       if (reqId !== currentGameflowSessionRequestId) return;
       console.error("加载 gameflow session 失败:", e);
@@ -1373,7 +1321,7 @@ export function useGamePlayerData(
       }
       if (phase === "InProgress" || phase === "GameStart") {
         // 从选人阶段进入载入或游戏时，清空 session 缓存
-        cachedSession = null;
+        invalidateGameflowSessionCache();
         loadFromGameflowSession();
       }
     },

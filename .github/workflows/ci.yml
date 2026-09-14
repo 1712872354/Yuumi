@@ -56,6 +56,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      - name: Check Tauri command registration
+        run: node scripts/check-commands.mjs
+
       - name: Frontend type check
         run: pnpm type-check
 

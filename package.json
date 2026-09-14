@@ -16,7 +16,8 @@
     "lint": "eslint src --ext .ts,.vue",
     "lint:fix": "eslint src --ext .ts,.vue --fix",
     "test:unit": "vitest run",
-    "check-all": "pnpm run format && pnpm type-check && pnpm lint && pnpm test:unit && pnpm fmt-check && pnpm clippy",
+    "check:commands": "node scripts/check-commands.mjs",
+    "check-all": "pnpm run check:commands && pnpm run format && pnpm type-check && pnpm lint && pnpm test:unit && pnpm fmt-check && pnpm clippy",
     "prepare": "husky"
   },
   "dependencies": {

@@ -10,6 +10,8 @@ fi
 rm -f /tmp/yuumi-staged
 
 # 剩余校验（不再重复 fmt-check，format 后必定通过）
+pnpm check:commands
 pnpm type-check
 pnpm exec eslint src --ext .ts,.vue --quiet
+pnpm test:unit
 pnpm clippy

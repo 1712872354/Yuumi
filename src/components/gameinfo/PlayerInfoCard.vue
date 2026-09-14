@@ -2,6 +2,7 @@
 import { computed, inject } from "vue";
 import { useI18n } from "vue-i18n";
 import { NVirtualList } from "naive-ui";
+import { useLcuStore } from "../../store/lcuStore";
 import {
   getChampionIcon,
   PREMADE_COLORS,
@@ -10,6 +11,7 @@ import {
 } from "../../types/gameInfo";
 import type { SavedPlayerMarker } from "../../api/lcu";
 import { setPlayerListKind } from "../../api/lcu";
+import { autoTagLabel, isGoodAutoTag } from "../../api/lcu/savedPlayers";
 import { useToast } from "../../composables/useToast";
 import { usePlayerSearch } from "../../composables/usePlayerSearch";
 import LcuImage from "../LcuImage.vue";
@@ -56,6 +58,7 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
+const lcuStore = useLcuStore();
 const { handleCareerClick } = usePlayerSearch();
 const { showToast } = useToast();
 const openOpgg = inject<(championId?: number) => void>("openOpgg");
@@ -264,12 +267,11 @@ const cardTags = computed(() => {
     if (marker.tag) {
       tags.push({ text: t("gameInfo.tagMarked"), cls: "tag-marked" });
     }
-    // 自动标签（大腿/坑/演员等）
+    // 自动标签（key 或旧中文串，统一走 helper 归一化）
     if (marker.autoTag) {
-      const isGood = marker.autoTag === "大腿" || marker.autoTag === "C位";
       tags.push({
-        text: marker.autoTag,
-        cls: isGood ? "tag-auto-good" : "tag-auto-bad",
+        text: autoTagLabel(marker.autoTag),
+        cls: isGoodAutoTag(marker.autoTag) ? "tag-auto-good" : "tag-auto-bad",
       });
     }
     // 上次关系
@@ -316,6 +318,14 @@ const matches = computed(() => {
 
 const isMatchHidden = computed(() => props.playerData?.matchHistoryHidden === true);
 const isLoading = computed(() => props.playerData?.loading === true);
+/** 对局中 LCU match-history 常不可用：区分「暂无数据」与「暂时拉不到」 */
+const isHistoryUnreachable = computed(() => {
+  if (isLoading.value || isMatchHidden.value) return false;
+  if (matches.value.length > 0) return false;
+  return (
+    lcuStore.gamePhase === "InProgress" || lcuStore.gamePhase === "GameStart"
+  );
+});
 
 function onSummonerClick(e: MouseEvent) {
   if (!summonerInfo.value) return;
@@ -574,6 +584,9 @@ async function setList(kind: "black" | "white" | "") {
           </div>
         </template>
       </NVirtualList>
+      <div v-else-if="isHistoryUnreachable" class="empty">
+        {{ $t("gameInfo.historyUnavailableInGame") }}
+      </div>
       <div v-else class="empty">{{ $t("career.empty") }}</div>
     </div>
   </div>

@@ -129,11 +129,13 @@ pub fn start(app_handle: AppHandle, mut session_rx: mpsc::Receiver<ChampSelectSe
             {
                 let state = app_handle.state::<crate::AppState>();
                 if state
+                    .agents
                     .bp_reset_flag
                     .swap(false, std::sync::atomic::Ordering::SeqCst)
                 {
                     log::info!("BP状态重置（gameflow阶段变化）");
                     state
+                        .agents
                         .bp_task_id
                         .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     selection = ChampionSelection::default();
@@ -145,6 +147,7 @@ pub fn start(app_handle: AppHandle, mut session_rx: mpsc::Receiver<ChampSelectSe
                 log::info!("收到重置选人代理状态的信号");
                 let state = app_handle.state::<crate::AppState>();
                 state
+                    .agents
                     .bp_task_id
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 selection = ChampionSelection::default();
@@ -199,6 +202,7 @@ async fn do_auto_swap(
             let current_id = {
                 let state = app_handle.state::<crate::AppState>();
                 state
+                    .agents
                     .bp_task_id
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                     + 1
@@ -211,7 +215,12 @@ async fn do_auto_swap(
 
                 {
                     let state = app_handle.state::<crate::AppState>();
-                    if state.bp_task_id.load(std::sync::atomic::Ordering::SeqCst) != current_id {
+                    if state
+                        .agents
+                        .bp_task_id
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                        != current_id
+                    {
                         log::info!("后台交换接受任务已失效 (版本不匹配)，退出");
                         return;
                     }
@@ -245,6 +254,7 @@ async fn do_auto_trade(
             let current_id = {
                 let state = app_handle.state::<crate::AppState>();
                 state
+                    .agents
                     .bp_task_id
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                     + 1
@@ -257,7 +267,12 @@ async fn do_auto_trade(
 
                 {
                     let state = app_handle.state::<crate::AppState>();
-                    if state.bp_task_id.load(std::sync::atomic::Ordering::SeqCst) != current_id {
+                    if state
+                        .agents
+                        .bp_task_id
+                        .load(std::sync::atomic::Ordering::SeqCst)
+                        != current_id
+                    {
                         log::info!("后台交易接受任务已失效 (版本不匹配)，退出");
                         return;
                     }
@@ -381,6 +396,7 @@ async fn do_auto_complete(
     let current_id = {
         let state = app_handle.state::<crate::AppState>();
         state
+            .agents
             .bp_task_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
             + 1
@@ -400,7 +416,12 @@ async fn do_auto_complete(
         // 验证该任务是否已被取消或被后续任务覆盖
         {
             let state = app_handle.state::<crate::AppState>();
-            if state.bp_task_id.load(std::sync::atomic::Ordering::SeqCst) != current_id {
+            if state
+                .agents
+                .bp_task_id
+                .load(std::sync::atomic::Ordering::SeqCst)
+                != current_id
+            {
                 log::info!("后台锁定任务已失效 (版本不匹配，可能已重置或有新任务)，退出");
                 return;
             }

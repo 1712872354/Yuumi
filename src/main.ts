@@ -9,6 +9,11 @@ import "@fontsource/outfit/400.css";
 import "@fontsource/outfit/600.css";
 import "@fontsource/outfit/800.css";
 
+// 全局主题变量与基础样式
+import "./styles/theme-tokens.css";
+import "./styles/base.css";
+import "./styles/naive-overrides.css";
+
 // 禁用右键菜单
 document.addEventListener("contextmenu", (e) => e.preventDefault());
 

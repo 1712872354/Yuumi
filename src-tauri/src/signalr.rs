@@ -72,36 +72,30 @@ pub enum SignalrCommand {
     SendRaw(Message),
 }
 
-static SIGNALR_TX: tokio::sync::Mutex<Option<mpsc::Sender<SignalrCommand>>> =
-    tokio::sync::Mutex::const_new(None);
-
-static SIGNALR_CANCEL_TX: tokio::sync::Mutex<Option<watch::Sender<bool>>> =
-    tokio::sync::Mutex::const_new(None);
-
-static CURRENT_SUMMONER_NAME: tokio::sync::Mutex<String> =
-    tokio::sync::Mutex::const_new(String::new());
-
 /// 停止 SignalR Hub 连接
-pub async fn stop() {
+pub async fn stop(app_handle: &AppHandle) {
     {
-        let mut cancel_lock = SIGNALR_CANCEL_TX.lock().await;
+        let state = app_handle.state::<crate::AppState>();
+        let mut cancel_lock = state.signalr.cancel_tx.lock().await;
         if let Some(tx) = cancel_lock.take() {
             let _ = tx.send(true);
             log::info!("[SignalR] 已向后台任务发送停止信号");
         }
     }
-    let mut tx_lock = SIGNALR_TX.lock().await;
+    let state = app_handle.state::<crate::AppState>();
+    let mut tx_lock = state.signalr.tx.lock().await;
     *tx_lock = None;
 }
 
 /// 获取当前连接状态
 #[tauri::command]
-pub async fn get_signalr_status() -> Result<String, String> {
-    let is_connected = SIGNALR_TX.lock().await.is_some();
+pub async fn get_signalr_status(app_handle: AppHandle) -> Result<String, String> {
+    let state = app_handle.state::<crate::AppState>();
+    let is_connected = state.signalr.tx.lock().await.is_some();
     if is_connected {
         Ok("connected".to_string())
     } else {
-        let is_connecting = SIGNALR_CANCEL_TX.lock().await.is_some();
+        let is_connecting = state.signalr.cancel_tx.lock().await.is_some();
         if is_connecting {
             Ok("connecting".to_string())
         } else {
@@ -142,7 +136,8 @@ pub fn start(app_handle: AppHandle, server_url: String, user_id: String) {
 
         let (cancel_tx, mut cancel_rx) = watch::channel(false);
         {
-            let mut cancel_lock = SIGNALR_CANCEL_TX.lock().await;
+            let state = app_handle.state::<crate::AppState>();
+            let mut cancel_lock = state.signalr.cancel_tx.lock().await;
             *cancel_lock = Some(cancel_tx);
         }
 
@@ -200,7 +195,8 @@ pub fn start(app_handle: AppHandle, server_url: String, user_id: String) {
 
         // 清理状态
         {
-            let mut lock = SIGNALR_TX.lock().await;
+            let state = app_handle.state::<crate::AppState>();
+            let mut lock = state.signalr.tx.lock().await;
             *lock = None;
         }
     });
@@ -348,7 +344,8 @@ async fn handle_connection(
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<SignalrCommand>(64);
     {
-        let mut lock = SIGNALR_TX.lock().await;
+        let state = app_handle.state::<crate::AppState>();
+        let mut lock = state.signalr.tx.lock().await;
         *lock = Some(cmd_tx);
     }
 
@@ -361,7 +358,7 @@ async fn handle_connection(
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         log::info!("[SignalR] 正在向 LCU 获取当前登录玩家信息用于首次云端对齐...");
         if let Ok(summoner) = query_current_summoner(&app_handle_clone).await {
-            update_summoner_info(summoner).await;
+            update_summoner_info(&app_handle_clone, summoner).await;
         } else {
             log::warn!("[SignalR] 未能在 LCU 中获取到当前玩家数据（游戏可能尚未启动或未登录）");
         }
@@ -370,7 +367,11 @@ async fn handle_connection(
     // 启动心跳定时器
     let user_id_heartbeat = user_id.to_string();
     let (heartbeat_cancel_tx, mut heartbeat_cancel_rx) = tokio::sync::oneshot::channel::<()>();
-    let heartbeat_cmd_tx = SIGNALR_TX.lock().await.clone();
+    let heartbeat_cmd_tx = {
+        let state = app_handle.state::<crate::AppState>();
+        let lock = state.signalr.tx.lock().await;
+        lock.clone()
+    };
     if let Some(h_tx) = heartbeat_cmd_tx {
         crate::spawn_log_panic(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
@@ -480,7 +481,8 @@ async fn handle_connection(
 
     let _ = heartbeat_cancel_tx.send(());
     {
-        let mut lock = SIGNALR_TX.lock().await;
+        let state = app_handle.state::<crate::AppState>();
+        let mut lock = state.signalr.tx.lock().await;
         *lock = None;
     }
 }
@@ -658,7 +660,7 @@ async fn lcu_get(app_handle: &AppHandle, endpoint: &str) -> Result<Value, String
     let state = app_handle.state::<crate::AppState>();
     // 锁内只提取连接参数，立即释放读锁，避免跨 HTTP await 持有锁阻塞 monitor 重连写锁
     let (port, token, http_client) = {
-        let lock = state.lcu_client.read().await;
+        let lock = state.lcu.client.read().await;
         let lcu = lock.as_ref().ok_or("LCU 未连接")?;
         (lcu.port, lcu.token.clone(), lcu.http_client.clone())
     };
@@ -682,8 +684,9 @@ async fn lcu_get(app_handle: &AppHandle, endpoint: &str) -> Result<Value, String
 
 // ─── 辅助方法及外部推送 ───
 
-pub async fn get_current_summoner_name() -> String {
-    let lock = CURRENT_SUMMONER_NAME.lock().await;
+pub async fn get_current_summoner_name(app_handle: &AppHandle) -> String {
+    let state = app_handle.state::<crate::AppState>();
+    let lock = state.signalr.current_summoner_name.lock().await;
     if lock.is_empty() {
         "Unknown".to_string()
     } else {
@@ -695,7 +698,7 @@ async fn query_current_summoner(app_handle: &AppHandle) -> Result<serde_json::Va
     let state = app_handle.state::<crate::AppState>();
     // 锁内只提取连接参数，立即释放读锁，避免跨 HTTP await 持有锁阻塞 monitor 重连写锁
     let (port, token, http_client) = {
-        let lock = state.lcu_client.read().await;
+        let lock = state.lcu.client.read().await;
         let lcu = lock.as_ref().ok_or("LCU 未连接")?;
         (lcu.port, lcu.token.clone(), lcu.http_client.clone())
     };
@@ -722,14 +725,15 @@ async fn query_current_summoner(app_handle: &AppHandle) -> Result<serde_json::Va
     }
 }
 
-pub async fn update_summoner_info(summoner: serde_json::Value) {
+pub async fn update_summoner_info(app_handle: &AppHandle, summoner: serde_json::Value) {
     let name = summoner
         .get("displayName")
         .and_then(|v| v.as_str())
         .unwrap_or("Unknown")
         .to_string();
     {
-        let mut name_lock = CURRENT_SUMMONER_NAME.lock().await;
+        let state = app_handle.state::<crate::AppState>();
+        let mut name_lock = state.signalr.current_summoner_name.lock().await;
         *name_lock = name.clone();
     }
     let info = serde_json::json!({
@@ -745,12 +749,20 @@ pub async fn update_summoner_info(summoner: serde_json::Value) {
         summoner.get("puuid").and_then(|v| v.as_str()).unwrap_or(""),
         name
     );
-    let _ = send_event("summoner_info", info).await;
+    let _ = send_event(app_handle, "summoner_info", info).await;
 }
 
-pub async fn send_event(event_type: &str, data: serde_json::Value) -> Result<(), String> {
+pub async fn send_event(
+    app_handle: &AppHandle,
+    event_type: &str,
+    data: serde_json::Value,
+) -> Result<(), String> {
     // 锁内仅克隆发送端，避免通道满时跨 await 持锁阻塞 get_signalr_status 等其他调用方
-    let tx = SIGNALR_TX.lock().await.as_ref().cloned();
+    let tx = {
+        let state = app_handle.state::<crate::AppState>();
+        let lock = state.signalr.tx.lock().await;
+        lock.as_ref().cloned()
+    };
     let Some(tx) = tx else {
         return Err("SignalR 未连接".to_string());
     };

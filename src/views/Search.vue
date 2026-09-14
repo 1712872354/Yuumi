@@ -21,21 +21,18 @@ import {
   updateConfig,
 } from "../api/lcu";
 import type { SummonerDisplay, MatchDisplay, AppConfig } from "../api/lcu";
-import type {
-  GameDataAssets,
-  MatchDetail,
-  MatchDetailTeam,
-  RawSummoner,
-  RankedStats,
-} from "../types/lcu";
+import type { GameDataAssets, RawSummoner } from "../types/lcu";
 import LcuOfflineState from "../components/LcuOfflineState.vue";
 import MiniMatchList from "../components/search/MiniMatchList.vue";
 import MatchDetailPanel from "../components/search/MatchDetailPanel.vue";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useToast } from "../composables/useToast";
-import { runWithConcurrency } from "../utils/runWithConcurrency";
-import type { GameDetail, GameDetailPlayer } from "../types/search";
+import type { GameDetail } from "../types/search";
+import { QUEUE_FILTER_OPTIONS } from "../utils/queueMeta";
+import { buildGameDetail } from "../utils/gameDetailBuilder";
+import { useSearchHistory } from "../composables/useSearchHistory";
+import { useMatchDetailCache } from "../composables/useMatchDetailCache";
 
 const store = useLcuStore();
 const { t } = useI18n();
@@ -48,17 +45,9 @@ const error = ref("");
 const summoner = ref<SummonerDisplay | null>(null);
 const matches = ref<MatchDisplay[]>([]);
 
-// 游戏模式筛选
-const selectedQueue = ref<number>(-1); // -1 = 全部
-const QUEUE_OPTIONS = [
-  { id: -1, label: "全部" },
-  { id: 2400, label: "海克斯大乱斗" },
-  { id: 2450, label: "经典海斗" },
-  { id: 450, label: "极地大乱斗" },
-  { id: 430, label: "匹配模式" },
-  { id: 420, label: "单双排位" },
-  { id: 440, label: "灵活排位" },
-];
+// 游戏模式筛选（-1 = 全部；n-select 不接受 null）
+const selectedQueue = ref<number>(-1);
+const QUEUE_OPTIONS = QUEUE_FILTER_OPTIONS;
 
 // 上传相关
 const uploadEnabled = ref(true);
@@ -83,6 +72,13 @@ const allFilteredMatches = computed(() => {
   );
 });
 
+const currentRiotId = computed(() => {
+  if (!summoner.value) return "";
+  const gn = summoner.value.gameName || summoner.value.displayName;
+  const tl = summoner.value.tagLine;
+  return tl ? `${gn}#${tl}` : gn;
+});
+
 function selectQueue(id: number) {
   selectedQueue.value = id;
   currentPageNum.value = 1;
@@ -99,66 +95,28 @@ function searchPlayerBySummonerId(summonerId: number, displayName: string) {
   if (!summonerId) return;
   pendingSummonerId.value = summonerId;
   searchName.value = displayName || String(summonerId);
-  // 重置上一个人的对局详情，为新玩家数据腾出空间并确保重新加载第一局
-  selectedGame.value = null;
-  selectedGameId.value = null;
+  resetSelection();
   doSearch();
 }
 
-// 对局详情相关
-const selectedGameId = ref<number | null>(null);
-const selectedGame = ref<MatchDetail | null>(null);
-const gameLoading = ref(false);
-const participantRanks = ref<Record<string, string>>({});
-
 const appConfig = ref<AppConfig | null>(null);
+const showTierInGameInfo = computed(
+  () => appConfig.value?.Functions?.ShowTierInGameInfo ?? false,
+);
 
-const TIER_MAP: Record<string, string> = {
-  NONE: "",
-  IRON: "黑铁",
-  BRONZE: "黄铜",
-  SILVER: "白银",
-  GOLD: "黄金",
-  PLATINUM: "铂金",
-  EMERALD: "翡翠",
-  DIAMOND: "钻石",
-  MASTER: "大师",
-  GRANDMASTER: "宗师",
-  CHALLENGER: "王者",
-};
 const gameDataAssets = ref<GameDataAssets | null>(null);
 
-// ─── 对局详情 + 段位内存缓存（避免翻页/重复搜索/重复点选时重复请求）───
-const GAME_DETAIL_TTL = 10 * 60 * 1000;
-const RANK_TTL = 5 * 60 * 1000;
-const CACHE_LIMIT = 200;
-interface CacheEntry<T> {
-  value: T;
-  ts: number;
-}
-const gameDetailCache = new Map<number, CacheEntry<MatchDetail>>();
-const rankCache = new Map<string, CacheEntry<string>>();
+const {
+  selectedGameId,
+  selectedGame,
+  gameLoading,
+  participantRanks,
+  selectMatch: selectMatchCached,
+  resetSelection,
+} = useMatchDetailCache();
 
-function cacheGet<K, T>(
-  cache: Map<K, CacheEntry<T>>,
-  key: K,
-  ttl: number,
-): T | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.ts >= ttl) {
-    cache.delete(key);
-    return null;
-  }
-  return entry.value;
-}
-
-function cacheSet<K, T>(cache: Map<K, CacheEntry<T>>, key: K, value: T) {
-  if (cache.size >= CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  cache.set(key, { value, ts: Date.now() });
+function selectMatch(gameId: number) {
+  return selectMatchCached(gameId, showTierInGameInfo.value);
 }
 
 // 分页相关
@@ -176,70 +134,20 @@ const PREFETCH_PAGES = 1; // 提前 1 页预拉取
 // 搜索代数：每次发起新搜索自增，用于丢弃旧搜索的后台预取结果，防止串号污染
 let searchGeneration = 0;
 
-// 搜索历史
-const searchHistory = ref<string[]>([]);
-const showHistory = ref(false);
-
-function loadSearchHistory() {
-  try {
-    const saved = localStorage.getItem("yuumi_search_history");
-    if (saved) searchHistory.value = JSON.parse(saved);
-  } catch {
-    /* ignore */
-  }
-}
-
-function saveToHistory(name: string) {
-  const trimmed = name.trim();
-  if (!trimmed) return;
-  // 去重，最新的放最前面
-  searchHistory.value = [
-    trimmed,
-    ...searchHistory.value.filter((h: string) => h !== trimmed),
-  ].slice(0, 20);
-  localStorage.setItem(
-    "yuumi_search_history",
-    JSON.stringify(searchHistory.value),
-  );
-}
-
-function removeFromHistory(name: string) {
-  searchHistory.value = searchHistory.value.filter((h: string) => h !== name);
-  localStorage.setItem(
-    "yuumi_search_history",
-    JSON.stringify(searchHistory.value),
-  );
-}
+const {
+  showHistory,
+  filteredHistory,
+  loadSearchHistory,
+  saveToHistory,
+  removeFromHistory,
+  hideHistoryDelayed,
+} = useSearchHistory(searchName, currentRiotId);
 
 function selectHistory(name: string) {
   searchName.value = name;
   showHistory.value = false;
   doSearch();
 }
-
-function hideHistoryDelayed() {
-  setTimeout(() => {
-    showHistory.value = false;
-  }, 200);
-}
-
-// 过滤后的历史记录（根据当前输入）
-const filteredHistory = computed(() => {
-  const q = searchName.value.trim().toLowerCase();
-  if (!q) return searchHistory.value;
-
-  // 如果输入框内容和当前展示的召唤师姓名完全一致（代表没有进行新的输入，仅仅是点击聚焦），则展示全部历史记录
-  if (summoner.value) {
-    const gn = summoner.value.gameName || summoner.value.displayName;
-    const tl = summoner.value.tagLine;
-    const currentRiotId = tl ? `${gn}#${tl}` : gn;
-    if (q === currentRiotId.toLowerCase()) {
-      return searchHistory.value;
-    }
-  }
-
-  return searchHistory.value.filter((h: string) => h.toLowerCase().includes(q));
-});
 
 // 从 App.vue 注入 Career → Search 跳转状态
 const navigateSearchPayload = inject<
@@ -387,16 +295,14 @@ async function doSearch(): Promise<boolean> {
       summoner.value = null;
       matches.value = [];
       allMatchesSearch.value = [];
-      selectedGame.value = null;
-      selectedGameId.value = null;
+      resetSelection();
       return true;
     }
 
     // 成功后，开始准备赋新值前，清空旧的分页/详情等局部变量
     allMatchesSearch.value = [];
     loadedGameIndex.value = 0;
-    selectedGame.value = null;
-    selectedGameId.value = null;
+    resetSelection();
     currentPageNum.value = 1;
     uploadedGameIds.value = new Set();
 
@@ -434,8 +340,7 @@ async function doSearch(): Promise<boolean> {
     summoner.value = null;
     matches.value = [];
     allMatchesSearch.value = [];
-    selectedGame.value = null;
-    selectedGameId.value = null;
+    resetSelection();
   } finally {
     searching.value = false;
   }
@@ -529,8 +434,7 @@ async function loadMatchHistoryList() {
     // 首次加载失败时清空残留的上一次查询数据，避免展示归属错误的对局
     if (allMatchesSearch.value.length === 0) {
       matches.value = [];
-      selectedGame.value = null;
-      selectedGameId.value = null;
+      resetSelection();
     }
     showToast(`战绩列表获取失败: ${String(e)}`, "error");
   }
@@ -606,106 +510,6 @@ async function loadMoreMatches() {
   }
 }
 
-// 请求序号：防止快速点击不同对局时，旧请求的结果回写新状态
-let selectMatchRequestId = 0;
-
-async function selectMatch(gameId: number) {
-  const requestId = ++selectMatchRequestId;
-  selectedGameId.value = gameId;
-  gameLoading.value = true;
-  try {
-    let g = cacheGet(gameDetailCache, gameId, GAME_DETAIL_TTL);
-    if (!g) {
-      const resp = await lcuRequest<MatchDetail>(
-        "GET",
-        `/lol-match-history/v1/games/${gameId}`,
-      );
-      if (resp.success && resp.data) {
-        g = resp.data;
-        cacheSet(gameDetailCache, gameId, g);
-      }
-    }
-    if (!g || requestId !== selectMatchRequestId) return;
-    selectedGame.value = g;
-
-    // 清空上次对局玩家的段位缓存
-    participantRanks.value = {};
-
-    // 段位后台渐进加载，不阻塞详情主体展示
-    void loadRanksInBackground(g, requestId);
-  } catch (e) {
-    if (requestId !== selectMatchRequestId) return;
-    console.error("拉取对局详细信息失败:", e);
-  } finally {
-    if (requestId === selectMatchRequestId) {
-      gameLoading.value = false;
-    }
-  }
-}
-
-// 段位请求独立于详情展示，完成后一次性赋值，避免逐个写入触发多次响应式更新
-async function loadRanksInBackground(g: MatchDetail, requestId: number) {
-  const participants = g.participants || [];
-  const identities = g.participantIdentities || [];
-
-  // 如果开启了显示段位选项，则后台拉取所有玩家的段位
-  const showTier = appConfig.value?.Functions?.ShowTierInGameInfo ?? false;
-  if (!showTier || participants.length === 0) return;
-
-  const playerPuuids: string[] = [];
-  for (const identity of identities) {
-    if (identity.player?.puuid && identity.player.summonerId) {
-      // 排除机器人
-      playerPuuids.push(identity.player.puuid);
-    }
-  }
-  if (playerPuuids.length === 0) return;
-
-  const rankResults: Record<string, string> = {};
-
-  // 并发拉取段位数据（命中缓存则直接复用），限流并发避免请求风暴
-  await runWithConcurrency(playerPuuids, 3, async (puuid) => {
-    const cachedRank = cacheGet(rankCache, puuid, RANK_TTL);
-    if (cachedRank !== null) {
-      rankResults[puuid] = cachedRank;
-      return;
-    }
-    try {
-      const rResp = await lcuRequest<RankedStats>(
-        "GET",
-        `/lol-ranked/v1/ranked-stats/${puuid}`,
-      );
-      if (rResp.success && rResp.data?.queues) {
-        const queues = rResp.data.queues;
-        // 优先单双排，其次灵活排位
-        const solo = queues.find(
-          (q) => q.queueType === "RANKED_SOLO_5x5",
-        );
-        const flex = queues.find(
-          (q) => q.queueType === "RANKED_FLEX_SR",
-        );
-        const activeQueue = solo || flex;
-        if (activeQueue && activeQueue.tier && activeQueue.tier !== "NONE") {
-          const tier = TIER_MAP[activeQueue.tier] || activeQueue.tier;
-          const div =
-            activeQueue.rank && activeQueue.rank !== "NA"
-              ? activeQueue.rank
-              : "";
-          const rankStr = `${tier}${div}`;
-          cacheSet(rankCache, puuid, rankStr);
-          rankResults[puuid] = rankStr;
-        }
-      }
-    } catch (e) {
-      console.error(`拉取 PUUID 为 ${puuid} 的段位失败:`, e);
-    }
-  });
-
-  if (requestId === selectMatchRequestId) {
-    participantRanks.value = rankResults;
-  }
-}
-
 async function handlePrevPage() {
   if (searching.value || pageSwitching.value) return; // 防重入
   if (currentPageNum.value > 1) {
@@ -755,68 +559,6 @@ async function handleNextPage() {
   }
 }
 
-// 静态映射查找
-function getSpellUrl(spellId?: number) {
-  if (!spellId) return "";
-  const path = gameDataAssets.value?.spells?.[spellId];
-  if (!path) return "";
-  return path.startsWith("/") ? path : "/" + path;
-}
-
-function getRuneUrl(runeId?: number) {
-  if (!runeId) return "";
-  const path = gameDataAssets.value?.runes?.[runeId];
-  if (!path) return "";
-  return path.startsWith("/") ? path : "/" + path;
-}
-
-function getItemUrl(itemId?: number) {
-  if (!itemId) return "";
-  const mapped = gameDataAssets.value?.items?.[itemId];
-  if (mapped) {
-    return mapped.startsWith("/") ? mapped : "/" + mapped;
-  }
-  // 回退：LCU 标准物品图标路径（小写）
-  return `/lol-game-data/assets/v1/items/icons2d/${itemId}.png`;
-}
-
-function getAugmentUrl(augmentId: number) {
-  if (!augmentId) return "";
-  const detail = gameDataAssets.value?.augments?.[augmentId];
-  if (detail?.iconPath) {
-    return detail.iconPath.startsWith("/") ? detail.iconPath : "/" + detail.iconPath;
-  }
-  return "";
-}
-
-/** 海克斯强化数据来源（stats 或 participant 上均可能携带） */
-interface AugmentSource {
-  augments?: number[];
-  playerAugment1?: number;
-  playerAugment2?: number;
-  playerAugment3?: number;
-  playerAugment4?: number;
-  playerAugment5?: number;
-}
-
-/** 从 stats 和 participant 中提取海克斯强化 ID（去重，最多 5 个） */
-function extractAugmentIds(stats: AugmentSource, participant?: AugmentSource): number[] {
-  const seen = new Set<number>();
-  const ids: number[] = [];
-  for (const source of [stats, participant].filter(Boolean) as AugmentSource[]) {
-    if (Array.isArray(source.augments)) {
-      for (const id of source.augments) {
-        if (id && !seen.has(id)) { seen.add(id); ids.push(id); }
-      }
-    }
-    for (let i = 1; i <= 5; i++) {
-      const id = source[`playerAugment${i}` as keyof AugmentSource] as number | undefined;
-      if (id && !seen.has(id)) { seen.add(id); ids.push(id); }
-    }
-  }
-  return ids.slice(0, 5);
-}
-
 function copyGameId(gameId: number) {
   navigator.clipboard.writeText(String(gameId));
   showToast(`游戏 ID: ${gameId} 已复制到剪贴板`);
@@ -824,207 +566,11 @@ function copyGameId(gameId: number) {
 
 const gameDetails = computed<GameDetail | null>(() => {
   if (!selectedGame.value) return null;
-  const g = selectedGame.value;
-
-  const playerMap: Record<
-    number,
-    { name: string; puuid: string; summonerId: number }
-  > = {};
-  if (g.participantIdentities) {
-    for (const identity of g.participantIdentities) {
-      const pId = identity.participantId;
-      const player = identity.player;
-      const baseName = player?.gameName || player?.summonerName || "未知";
-      const tag = player?.tagLine;
-      playerMap[pId] = {
-        name: tag ? `${baseName}#${tag}` : baseName,
-        puuid: player?.puuid || "",
-        summonerId: player?.summonerId ?? 0,
-      };
-    }
-  }
-
-  const bluePlayers: GameDetailPlayer[] = [];
-  const redPlayers: GameDetailPlayer[] = [];
-
-  if (g.participants) {
-    for (const p of g.participants) {
-      const pId = p.participantId;
-      const nameInfo = playerMap[pId] || {
-        name: "未知",
-        puuid: "",
-        summonerId: 0,
-      };
-      const stats = p.stats || {};
-
-      const itemUrls = [
-        getItemUrl(stats.item0),
-        getItemUrl(stats.item1),
-        getItemUrl(stats.item2),
-        getItemUrl(stats.item3),
-        getItemUrl(stats.item4),
-        getItemUrl(stats.item5),
-        getItemUrl(stats.item6),
-      ];
-
-      const augmentIds = extractAugmentIds(stats, p);
-      const augmentIconUrls: string[] = [];
-      const augmentNames: string[] = [];
-
-      for (const id of augmentIds) {
-        const url = getAugmentUrl(id);
-        if (url) {
-          augmentIconUrls.push(url);
-          const detail = gameDataAssets.value?.augments?.[id];
-          const name = detail?.name?.trim() ? detail.name : "海克斯强化";
-          augmentNames.push(name);
-        }
-      }
-
-      const pData = {
-        participantId: pId,
-        teamId: p.teamId,
-        championId: p.championId,
-        championIconUrl: `/lol-game-data/assets/v1/champion-icons/${p.championId}.png`,
-        spell1Url: getSpellUrl(p.spell1Id),
-        spell2Url: getSpellUrl(p.spell2Id),
-        runeUrl: getRuneUrl(stats.perk0),
-        name: nameInfo.name,
-        puuid: nameInfo.puuid,
-        summonerId: nameInfo.summonerId,
-        level: stats.champLevel,
-        kills: stats.kills ?? 0,
-        deaths: stats.deaths ?? 0,
-        assists: stats.assists ?? 0,
-        cs: (stats.totalMinionsKilled ?? 0) + (stats.neutralMinionsKilled ?? 0),
-        gold: stats.goldEarned ?? 0,
-        damage: stats.totalDamageDealtToChampions ?? 0,
-        items: itemUrls.slice(0, 6),
-        ward: itemUrls[6],
-        win: stats.win,
-        augmentIconUrls,
-        augmentNames,
-      };
-
-      if (p.teamId === 100) {
-        bluePlayers.push(pData);
-      } else {
-        redPlayers.push(pData);
-      }
-    }
-  }
-
-  const isBlueWin = bluePlayers[0]?.win ?? false;
-
-  const blueKills = bluePlayers.reduce((sum, p) => sum + p.kills, 0);
-  const redKills = redPlayers.reduce((sum, p) => sum + p.kills, 0);
-
-  // 从 teams 数据中提取团队目标统计
-  const teamsData: MatchDetailTeam[] = g.teams || [];
-  const blueTeamRaw =
-    teamsData.find((t) => t.teamId === 100) || ({} as MatchDetailTeam);
-  const redTeamRaw =
-    teamsData.find((t) => t.teamId === 200) || ({} as MatchDetailTeam);
-
-  const queueNames: Record<number, string> = {
-    400: "征召模式",
-    420: "排位单双排",
-    430: "匹配模式",
-    440: "排位灵活组排",
-    480: "快速模式",
-    490: "快速模式",
-    450: "极地大乱斗",
-    2400: "海克斯大乱斗",
-    2450: "经典海斗",
-    900: "无限火力",
-    1010: "随机无限火力",
-    1020: "克隆模式",
-    1300: "极限闪击",
-    1700: "斗魂竞技场",
-    1710: "斗魂竞技场",
-    1810: "捉鬼模式",
-    1820: "捉鬼模式",
-    1830: "捉鬼模式",
-    1840: "捉鬼模式",
-    4300: "经典模式",
-    4310: "经典模式",
-    0: "自定义模式",
-  };
-
-  const mapNames: Record<number, string> = {
-    11: "召唤师峡谷",
-    12: "嚎哭深渊",
-    21: "极限闪击",
-    22: "对战大厅",
-    453: "经典峡谷",
-  };
-
-  const mins = Math.floor(g.gameDuration / 60);
-  const secs = g.gameDuration % 60;
-  const durationStr = `${mins}:${secs < 10 ? "0" + secs : secs}`;
-
-  const date = new Date(g.gameCreation);
-  const dateStr = `${date.getFullYear()}/${(date.getMonth() + 1).toString().padStart(2, "0")}/${date.getDate().toString().padStart(2, "0")} ${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
-
-  // 判定当前选中的对局是胜利还是失败（当前搜索的召唤师是哪一方）
-  let isQueriedPlayerWin = false;
-  let queriedPlayerChampionIconUrl = "";
-  if (summoner.value) {
-    const queriedPuuid = summoner.value.puuid;
-    const allPlayers = [...bluePlayers, ...redPlayers];
-    const found = allPlayers.find((p) => p.puuid === queriedPuuid);
-    if (found) {
-      isQueriedPlayerWin = found.win ?? false;
-      queriedPlayerChampionIconUrl = found.championIconUrl;
-    }
-  }
-
-  // 计算地图状态图标名（根据 mapId 和 win）
-  const resultStr = isQueriedPlayerWin ? "victory" : "defeat";
-  let mapKey = "other";
-  if (g.mapId === 11) {
-    mapKey = "sr";
-  } else if (g.mapId === 12) {
-    mapKey = "ha";
-  } else if (g.mapId === 30 || g.queueId === 1700) {
-    mapKey = "arena";
-  }
-  const mapIconUrl = `/images/${mapKey}-${resultStr}.png`;
-
-  return {
-    gameId: g.gameId,
-    queueId: g.queueId,
-    mapId: g.mapId,
-    duration: durationStr,
-    date: dateStr,
-    queueName: queueNames[g.queueId] || "自定义模式",
-    mapName: mapNames[g.mapId] || "未知地图",
-    win: isQueriedPlayerWin,
-    queriedPlayerChampionIconUrl,
-    mapIconUrl,
-    blue: {
-      teamId: 100,
-      players: bluePlayers,
-      kills: blueKills,
-      win: isBlueWin,
-      towerKills: blueTeamRaw.towerKills ?? 0,
-      inhibitorKills: blueTeamRaw.inhibitorKills ?? 0,
-      baronKills: blueTeamRaw.baronKills ?? 0,
-      dragonKills: blueTeamRaw.dragonKills ?? 0,
-      riftHeraldKills: blueTeamRaw.riftHeraldKills ?? 0,
-    },
-    red: {
-      teamId: 200,
-      players: redPlayers,
-      kills: redKills,
-      win: !isBlueWin,
-      towerKills: redTeamRaw.towerKills ?? 0,
-      inhibitorKills: redTeamRaw.inhibitorKills ?? 0,
-      baronKills: redTeamRaw.baronKills ?? 0,
-      dragonKills: redTeamRaw.dragonKills ?? 0,
-      riftHeraldKills: redTeamRaw.riftHeraldKills ?? 0,
-    },
-  };
+  return buildGameDetail(
+    selectedGame.value,
+    gameDataAssets.value,
+    summoner.value?.puuid || null,
+  );
 });
 </script>
 
@@ -1110,7 +656,7 @@ const gameDetails = computed<GameDetail | null>(() => {
                 q.id === null || q.id === -1
                   ? $t('career.all')
                   : $t('gameModes.' + q.id),
-              value: q.id,
+              value: q.id === null ? -1 : q.id,
             }))
           "
           @update:value="selectQueue"

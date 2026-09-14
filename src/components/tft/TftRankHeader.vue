@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useI18n } from "vue-i18n";
 import type { TftRankDisplay, TftMatchSummary } from "../../composables/useTftData";
+import { TIER_MAP as LOL_TIER_MAP } from "../../utils/queueMeta";
 
 const props = defineProps<{
   rankedStats: TftRankDisplay | null;
@@ -9,19 +10,10 @@ const props = defineProps<{
 
 const { t } = useI18n();
 
+/** 标准段位 + TFT Hyper Roll 颜色段 */
 const TIER_MAP: Record<string, string> = {
-  NONE: "无段位",
+  ...LOL_TIER_MAP,
   UNRANKED: "未组排位",
-  IRON: "坚韧黑铁",
-  BRONZE: "英勇黄铜",
-  SILVER: "不屈白银",
-  GOLD: "荣耀黄金",
-  PLATINUM: "华贵铂金",
-  EMERALD: "流光翡翠",
-  DIAMOND: "璀璨钻石",
-  MASTER: "超凡大师",
-  GRANDMASTER: "傲世宗师",
-  CHALLENGER: "最强王者",
   GRAY: "灰白",
   GREEN: "翠绿",
   BLUE: "天蓝",

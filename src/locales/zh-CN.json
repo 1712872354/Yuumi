@@ -649,6 +649,7 @@
     "wins": "胜场",
     "mastery": "擅长",
     "matchHidden": "战绩已隐藏",
+    "historyUnavailableInGame": "对局中暂无法拉取战绩，结算后自动恢复",
     "tagSelf": "自己",
     "tagMarked": "已标记",
     "tagFateAlly": "上局队友",

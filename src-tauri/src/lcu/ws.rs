@@ -98,7 +98,11 @@ pub fn connect(app_handle: AppHandle, port: u16, token: String) {
     // 取消上一次 WS 循环
     let mut cancel_rx = {
         let state = app_handle.state::<crate::AppState>();
-        let mut old_tx = state.ws_cancel_tx.lock().unwrap_or_else(|e| e.into_inner());
+        let mut old_tx = state
+            .lcu
+            .ws_cancel_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // 发送取消信号给旧循环
         if let Some(tx) = old_tx.take() {
             let _ = tx.send(true);
@@ -131,7 +135,7 @@ pub fn connect(app_handle: AppHandle, port: u16, token: String) {
                                 let state = app_clone.state::<crate::AppState>();
                                 // 锁内仅提取连接参数，随后释放再发起 HTTP，避免跨 await 持有读锁阻塞 monitor 写锁
                                 let conn = {
-                                    let lcu_lock = state.lcu_client.read().await;
+                                    let lcu_lock = state.lcu.client.read().await;
                                     lcu_lock
                                         .as_ref()
                                         .map(|lcu| (lcu.port, lcu.token.clone(), lcu.http_client.clone()))
@@ -151,7 +155,7 @@ pub fn connect(app_handle: AppHandle, port: u16, token: String) {
                                         if let Ok(phase) = resp.text().await {
                                             let phase = phase.trim_matches('"');
                                             log::info!("[WS] 获取到初始游戏阶段: {}", phase);
-                                            let _ = state.gameflow_tx.try_send(
+                                            let _ = state.agents.gameflow_tx.try_send(
                                                 crate::agents::auto_match::GameflowEvent::PhaseChanged(
                                                     phase.to_string(),
                                                 ),
@@ -326,7 +330,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
         if let Some(data) = event_data.get("data") {
             match crate::agents::auto_bp::ChampSelectSession::deserialize(data) {
                 Ok(session) => {
-                    if let Err(e) = state.bp_session_tx.try_send(session) {
+                    if let Err(e) = state.agents.bp_session_tx.try_send(session) {
                         match e {
                             tokio::sync::mpsc::error::TrySendError::Full(_) => {
                                 log::warn!(
@@ -358,7 +362,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 // 写入 AppState 缓存（悬浮窗挂载时可主动拉取）
                 {
                     let state = app_handle.state::<crate::AppState>();
-                    if let Ok(mut list) = state.bench_my_champions.lock() {
+                    if let Ok(mut list) = state.bench.my_champions.lock() {
                         if !list.contains(&cid) {
                             list.push(cid);
                         }
@@ -396,7 +400,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                         if cid > 0 {
                             // 写入 Rust AppState 历史缓存
                             let state = app_handle.state::<crate::AppState>();
-                            if let Ok(mut list) = state.bench_my_champions.lock() {
+                            if let Ok(mut list) = state.bench.my_champions.lock() {
                                 if !list.contains(&cid) {
                                     list.push(cid);
                                     log::info!("[WS] 从 session 记录我的英雄到缓存: {}", cid);
@@ -419,19 +423,15 @@ fn process_event(text: &str, app_handle: &AppHandle) {
 
     if uri.starts_with("/lol-gameflow/v1/gameflow-phase") {
         if let Some(phase) = event_data.get("data").and_then(|v| v.as_str()) {
-            if let Err(e) =
-                state
-                    .gameflow_tx
-                    .try_send(crate::agents::auto_match::GameflowEvent::PhaseChanged(
-                        phase.to_string(),
-                    ))
-            {
+            if let Err(e) = state.agents.gameflow_tx.try_send(
+                crate::agents::auto_match::GameflowEvent::PhaseChanged(phase.to_string()),
+            ) {
                 log::warn!("[WS] 推送 Gameflow PhaseChanged 失败: {}", e);
             }
             // 只有当真正从非 ChampSelect 阶段跨阶段进入 ChampSelect 时，才清空上局历史英雄缓存
-            if let Ok(mut last_phase) = state.last_gameflow_phase.lock() {
+            if let Ok(mut last_phase) = state.bench.last_gameflow_phase.lock() {
                 if *last_phase != "ChampSelect" && phase == "ChampSelect" {
-                    if let Ok(mut list) = state.bench_my_champions.lock() {
+                    if let Ok(mut list) = state.bench.my_champions.lock() {
                         list.clear();
                         log::info!("[WS] 跨阶段进入选人阶段，已清空板凳席历史英雄缓存");
                     }
@@ -446,7 +446,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
     if uri.starts_with("/lol-matchmaking/v1/ready-check") {
         if let Some(data) = event_data.get("data") {
             if let Ok(ready_check) = crate::agents::auto_match::ReadyCheckData::deserialize(data) {
-                if let Err(e) = state.gameflow_tx.try_send(
+                if let Err(e) = state.agents.gameflow_tx.try_send(
                     crate::agents::auto_match::GameflowEvent::ReadyCheck(ready_check),
                 ) {
                     log::warn!("[WS] 推送 Gameflow ReadyCheck 失败: {}", e);
@@ -458,7 +458,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
     if uri.starts_with("/lol-honor-v2/v1/ballot") {
         if let Some(data) = event_data.get("data") {
             if let Ok(ballot) = crate::agents::auto_match::HonorBallot::deserialize(data) {
-                if let Err(e) = state.gameflow_tx.try_send(
+                if let Err(e) = state.agents.gameflow_tx.try_send(
                     crate::agents::auto_match::GameflowEvent::HonorBallot(ballot),
                 ) {
                     log::warn!("[WS] 推送 Gameflow HonorBallot 失败: {}", e);
@@ -472,7 +472,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
             if let Ok(invitations) =
                 Vec::<crate::agents::auto_match::ReceivedInvitation>::deserialize(data)
             {
-                if let Err(e) = state.gameflow_tx.try_send(
+                if let Err(e) = state.agents.gameflow_tx.try_send(
                     crate::agents::auto_match::GameflowEvent::ReceivedInvitations(invitations),
                 ) {
                     log::warn!("[WS] 推送 Gameflow ReceivedInvitations 失败: {}", e);
@@ -495,6 +495,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
             .unwrap_or(&serde_json::Value::Null)
             .clone();
         let uri = uri.to_string();
+        let app_for_signalr = app_handle.clone();
         crate::spawn_log_panic(async move {
             if uri == "/lol-gameflow/v1/gameflow-phase" {
                 if let Some(phase) = data.as_str() {
@@ -510,8 +511,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                         "Reconnect" => "断线重连",
                         _ => phase,
                     };
-                    let name = crate::signalr::get_current_summoner_name().await;
+                    let name = crate::signalr::get_current_summoner_name(&app_for_signalr).await;
                     let _ = crate::signalr::send_event(
+                        &app_for_signalr,
                         "game_phase_changed",
                         serde_json::json!({
                             "phase": phase,
@@ -522,8 +524,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                     .await;
                 }
             } else if uri == "/lol-gameflow/v1/session" {
-                let name = crate::signalr::get_current_summoner_name().await;
+                let name = crate::signalr::get_current_summoner_name(&app_for_signalr).await;
                 let _ = crate::signalr::send_event(
+                    &app_for_signalr,
                     "game_session",
                     serde_json::json!({
                         "data": data,
@@ -532,8 +535,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 )
                 .await;
             } else if uri == "/lol-end-of-game/v1/eog-stats-block" {
-                let name = crate::signalr::get_current_summoner_name().await;
+                let name = crate::signalr::get_current_summoner_name(&app_for_signalr).await;
                 let _ = crate::signalr::send_event(
+                    &app_for_signalr,
                     "eog_stats",
                     serde_json::json!({
                         "data": data,
@@ -542,8 +546,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 )
                 .await;
             } else if uri == "/lol-gameflow/v1/watch" {
-                let name = crate::signalr::get_current_summoner_name().await;
+                let name = crate::signalr::get_current_summoner_name(&app_for_signalr).await;
                 let _ = crate::signalr::send_event(
+                    &app_for_signalr,
                     "watch_event",
                     serde_json::json!({
                         "data": data,
@@ -560,8 +565,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                     .get("actions")
                     .cloned()
                     .unwrap_or(serde_json::Value::Array(vec![]));
-                let name = crate::signalr::get_current_summoner_name().await;
+                let name = crate::signalr::get_current_summoner_name(&app_for_signalr).await;
                 let _ = crate::signalr::send_event(
+                    &app_for_signalr,
                     "champ_select",
                     serde_json::json!({
                         "phase": phase,
@@ -571,7 +577,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 )
                 .await;
             } else if uri == "/lol-summoner/v1/current-summoner" && data.is_object() {
-                crate::signalr::update_summoner_info(data).await;
+                crate::signalr::update_summoner_info(&app_for_signalr, data).await;
             }
         });
     }

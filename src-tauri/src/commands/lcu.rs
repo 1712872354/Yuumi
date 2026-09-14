@@ -14,7 +14,7 @@ pub struct LcuConnectionDetails {
 pub async fn get_lcu_connection_info(
     app_state: tauri::State<'_, AppState>,
 ) -> Result<Option<LcuConnectionDetails>, String> {
-    let lock = app_state.lcu_client.read().await;
+    let lock = app_state.lcu.client.read().await;
     match lock.as_ref() {
         Some(client) => Ok(Some(LcuConnectionDetails {
             pid: client.pid,
@@ -30,7 +30,7 @@ pub async fn get_lcu_connection_info(
 pub async fn get_map_side(app_state: tauri::State<'_, AppState>) -> Result<Option<String>, String> {
     // 锁内只提取连接参数，立即释放读锁，避免跨最长约 2.4s 的重试循环持有锁阻塞 monitor 重连写锁
     let (port, token, http_client) = {
-        let lock = app_state.lcu_client.read().await;
+        let lock = app_state.lcu.client.read().await;
         let lcu = lock.as_ref().ok_or("LCU 未连接")?;
         (lcu.port, lcu.token.clone(), lcu.http_client.clone())
     };
@@ -133,7 +133,7 @@ pub struct GameDataAssetsDisplay {
 pub async fn get_game_data_assets(
     app_state: tauri::State<'_, AppState>,
 ) -> Result<GameDataAssetsDisplay, String> {
-    let gd = app_state.game_data.read().await;
+    let gd = app_state.lcu.game_data.read().await;
     Ok(GameDataAssetsDisplay {
         items: gd.items.clone(),
         spells: gd.spells.clone(),
@@ -146,8 +146,185 @@ pub async fn get_game_data_assets(
 #[tauri::command]
 pub fn get_bench_my_champions(app_state: tauri::State<'_, AppState>) -> Vec<i64> {
     app_state
-        .bench_my_champions
+        .bench
+        .my_champions
         .lock()
         .map(|list| list.clone())
         .unwrap_or_default()
+}
+
+/// 进行中对局的双方玩家（从 gameflow session 解析，供 GameInfo 在前端 session 残缺时兜底）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveGamePlayer {
+    pub summoner_id: i64,
+    pub puuid: String,
+    pub summoner_name: String,
+    pub game_name: String,
+    pub tag_line: String,
+    pub champion_id: i32,
+    pub profile_icon_id: i32,
+    pub team: String, // "my" | "their"
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LiveGameTeams {
+    pub game_id: Option<i64>,
+    pub my_team: Vec<LiveGamePlayer>,
+    pub their_team: Vec<LiveGamePlayer>,
+}
+
+fn parse_live_players(
+    arr: &[serde_json::Value],
+) -> Vec<(i64, String, String, String, String, i32, i32)> {
+    arr.iter()
+        .filter_map(|p| {
+            let summoner_id = p.get("summonerId").and_then(|v| v.as_i64()).unwrap_or(0);
+            let puuid = p
+                .get("puuid")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let game_name = p
+                .get("gameName")
+                .or_else(|| p.get("displayName"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let tag_line = p
+                .get("tagLine")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let summoner_name = p
+                .get("summonerName")
+                .or_else(|| p.get("displayName"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let champion_id = p
+                .get("championId")
+                .or_else(|| p.get("championId"))
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0) as i32;
+            let profile_icon_id =
+                p.get("profileIconId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            if summoner_id == 0
+                && puuid.is_empty()
+                && game_name.is_empty()
+                && summoner_name.is_empty()
+            {
+                return None;
+            }
+            Some((
+                summoner_id,
+                puuid,
+                game_name,
+                tag_line,
+                summoner_name,
+                champion_id,
+                profile_icon_id,
+            ))
+        })
+        .collect()
+}
+
+/// 从 LCU gameflow session 拉取双方玩家；按当前召唤师归属 my/their
+#[tauri::command]
+pub async fn get_live_game_teams(
+    app_state: tauri::State<'_, AppState>,
+) -> Result<LiveGameTeams, String> {
+    use crate::lcu::client::lcu_request;
+
+    let session = lcu_request(app_state.inner(), "GET", "/lol-gameflow/v1/session", None).await?;
+    let game_data = session
+        .get("gameData")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let game_id = game_data.get("gameId").and_then(|v| v.as_i64());
+    let team_one = game_data
+        .get("teamOne")
+        .and_then(|v| v.as_array())
+        .map(|a| parse_live_players(a))
+        .unwrap_or_default();
+    let team_two = game_data
+        .get("teamTwo")
+        .and_then(|v| v.as_array())
+        .map(|a| parse_live_players(a))
+        .unwrap_or_default();
+
+    let self_info = lcu_request(
+        app_state.inner(),
+        "GET",
+        "/lol-summoner/v1/current-summoner",
+        None,
+    )
+    .await
+    .ok();
+    let self_sid = self_info
+        .as_ref()
+        .and_then(|v| v.get("summonerId").and_then(|s| s.as_i64()))
+        .unwrap_or(0);
+    let self_puuid = self_info
+        .as_ref()
+        .and_then(|v| v.get("puuid").and_then(|s| s.as_str()))
+        .unwrap_or("")
+        .to_string();
+
+    let contains_self = |players: &[(i64, String, String, String, String, i32, i32)]| {
+        players.iter().any(|(sid, puuid, ..)| {
+            (*sid > 0 && *sid == self_sid) || (!self_puuid.is_empty() && puuid == &self_puuid)
+        })
+    };
+
+    let (my_raw, their_raw) = if contains_self(&team_one) {
+        (team_one, team_two)
+    } else if contains_self(&team_two) {
+        (team_two, team_one)
+    } else {
+        // 未识别到自己：teamOne 按我方处理（与前端既有兜底一致）
+        (team_one, team_two)
+    };
+
+    let to_players = |raw: Vec<(i64, String, String, String, String, i32, i32)>, team: &str| {
+        raw.into_iter()
+            .map(
+                |(
+                    summoner_id,
+                    puuid,
+                    game_name,
+                    tag_line,
+                    summoner_name,
+                    champion_id,
+                    profile_icon_id,
+                )| {
+                    LiveGamePlayer {
+                        summoner_id,
+                        puuid,
+                        summoner_name,
+                        game_name,
+                        tag_line,
+                        champion_id,
+                        profile_icon_id,
+                        team: team.to_string(),
+                    }
+                },
+            )
+            .collect::<Vec<_>>()
+    };
+
+    let my_team = to_players(my_raw, "my");
+    let their_team = to_players(their_raw, "their");
+    log::info!(
+        "[LiveTeams] gameId={:?} my={} their={}",
+        game_id,
+        my_team.len(),
+        their_team.len()
+    );
+    Ok(LiveGameTeams {
+        game_id,
+        my_team,
+        their_team,
+    })
 }

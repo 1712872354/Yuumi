@@ -1,0 +1,244 @@
+/* Naive UI 全局覆盖与设置页共用卡片样式 */
+
+/* 全局 Naive UI 折叠面板卡片化定制与完美右对齐 */
+.collapse-card {
+  padding: 0 !important;
+  border: 1px solid var(--settings-card-border, var(--border-color)) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  background: var(--settings-card-bg, var(--card-bg)) !important;
+  margin-bottom: 12px !important; /* 增加卡片底部间距 */
+  box-shadow: var(--shadow-sm) !important;
+}
+.collapse-card .n-collapse-item__header {
+  padding: 16px 24px !important;
+  font-size: 0.88rem !important;
+  font-weight: bold !important;
+  color: var(--text-color) !important;
+  transition: background-color 0.25s !important;
+  display: flex !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+}
+.collapse-card .n-collapse-item__header:hover {
+  background-color: var(
+    --settings-card-bg-hover,
+    var(--card-bg-hover)
+  ) !important;
+}
+.collapse-card .n-collapse-item__header-main {
+  flex: 1 !important;
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+.collapse-card .n-collapse-item__header-extra {
+  margin-left: auto !important;
+  margin-right: 12px !important;
+  display: none !important; /* 完全隐藏自带的以使手写插槽对齐生效 */
+}
+.collapse-card .n-collapse-item__content {
+  padding: 20px 48px !important;
+  border-top: 1px dashed var(--border-color) !important;
+  background-color: rgba(0, 0, 0, 0.015) !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 8px !important;
+}
+.collapse-card .n-collapse-item__content-inner {
+  width: 100% !important;
+  box-sizing: border-box !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: stretch !important;
+  gap: 8px !important;
+}
+
+.setting-label {
+  flex-shrink: 0 !important;
+  white-space: nowrap !important;
+}
+
+.collapse-card .n-color-picker {
+  width: 100px !important;
+  flex-shrink: 0 !important;
+}
+
+/* 统一的手写头部 flex 排版布局，确保 100% 撑开并右对齐状态文本 */
+.collapse-header-wrapper {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  width: 100% !important;
+  flex: 1 !important;
+  padding-right: 8px !important;
+}
+.collapse-left {
+  display: flex !important;
+  align-items: center !important;
+  gap: 16px !important;
+}
+.collapse-left-simple {
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 !important;
+}
+.collapse-right-status {
+  flex-shrink: 0 !important;
+  margin-left: 12px !important;
+  color: var(--primary-color) !important;
+  font-weight: 600 !important;
+}
+
+/* 设置与工具页面中的输入/按钮行右对齐重写 */
+.input-row {
+  display: flex !important;
+  width: 100% !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+/* 1. 外观装饰统一归并 (卡片化底色与内缩边距) */
+.setting-input-row,
+.setting-row,
+.path-actions,
+.color-pickers-row,
+.reset-row,
+.setting-picker-row {
+  background: var(--settings-row-bg) !important;
+  border: 1px solid var(--settings-row-border) !important;
+  padding: 12px 20px !important;
+  border-radius: 8px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.01) !important;
+  box-sizing: border-box !important;
+  margin-bottom: 0 !important;
+  transition: all 0.2s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+}
+.setting-input-row:hover,
+.setting-row:hover,
+.path-actions:hover,
+.color-pickers-row:hover,
+.reset-row:hover,
+.setting-picker-row:hover {
+  background: var(--settings-row-bg-hover) !important;
+  border-color: var(--settings-row-border-hover) !important;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02) !important;
+  transform: translateY(-0.5px);
+}
+
+/* 2. 布局特性各自保留 */
+.setting-input-row,
+.setting-row {
+  display: flex !important;
+  width: 100% !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 16px !important;
+}
+.setting-row.justify-end {
+  justify-content: flex-end !important;
+}
+.path-actions {
+  display: flex !important;
+  width: 100% !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+.color-pickers-row {
+  display: flex !important;
+  width: 100% !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+  gap: 16px !important;
+  flex-wrap: wrap !important;
+}
+.reset-row {
+  display: flex !important;
+  width: 100% !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+}
+.setting-picker-row {
+  display: flex !important;
+  width: 100% !important;
+  justify-content: flex-end !important;
+  align-items: center !important;
+}
+.setting-picker-row .champion-picker {
+  width: 100% !important;
+}
+.setting-picker-row .picker-trigger {
+  justify-content: flex-end !important;
+}
+.setting-picker-row .selected-chips {
+  flex: none !important;
+  display: flex !important;
+  justify-content: flex-end !important;
+}
+
+/* 全局 Naive UI 浮动弹出层毛玻璃化与硬件加速 */
+.n-popover,
+.n-dropdown-menu,
+.n-select-menu,
+.n-modal,
+.n-drawer {
+  background-color: var(--card-bg) !important;
+  border: 1px solid var(--border-color) !important;
+  box-shadow: var(--shadow-lg) !important;
+  transform: translateZ(0); /* 开启 GPU 硬件加速 */
+}
+
+/* 如果开启了云母效果，且不是嵌套状态，赋予菜单毛玻璃质感 */
+html[data-mica="true"] .n-popover,
+html[data-mica="true"] .n-dropdown-menu,
+html[data-mica="true"] .n-select-menu,
+html[data-mica="true"] .n-modal,
+html[data-mica="true"] .n-drawer {
+  backdrop-filter: var(--glass-filter, blur(24px) saturate(200%)) !important;
+  -webkit-backdrop-filter: var(--glass-filter, blur(24px) saturate(200%)) !important;
+}
+
+/* 全局输入框聚焦时的呼吸发光高亮 */
+.n-input {
+  transition: border-color 0.25s cubic-bezier(0.25, 0.8, 0.25, 1),
+              box-shadow 0.25s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
+}
+.n-input--focus {
+  border-color: var(--primary-color) !important;
+  box-shadow: 0 0 0 3px var(--primary-color-alpha-15) !important;
+}
+
+/* 全局战绩卡片物理上浮微动效 */
+.match-card {
+  transition: transform 0.25s cubic-bezier(0.25, 0.8, 0.25, 1),
+              box-shadow 0.25s cubic-bezier(0.25, 0.8, 0.25, 1),
+              border-color 0.25s,
+              background-color 0.25s !important;
+}
+.match-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md) !important;
+  border-color: var(--primary-color-alpha-30) !important;
+}
+
+/* 战绩卡片鼠标滑过时背景颜色变深，支持动态变量 */
+.match-card.win:hover,
+.mini-match-card.win:hover {
+  background-color: var(--win-bg-hover) !important;
+}
+.match-card.lose:hover,
+.mini-match-card.lose:hover {
+  background-color: var(--loss-bg-hover) !important;
+}
+.match-card.remake:hover,
+.mini-match-card.remake:hover {
+  background-color: var(--remake-bg-hover) !important;
+}

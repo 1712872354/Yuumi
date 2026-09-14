@@ -9,6 +9,9 @@ import {
 import type { SummonerDisplay, MatchDisplay } from "../api/lcu";
 import type { RankDisplaySource, RankedQueueEntry, RankedStats } from "../types/lcu";
 import { lazySetItem } from "../utils/lazyStorage";
+import { QUEUE_FILTER_OPTIONS, formatRankDisplay } from "../utils/queueMeta";
+import { getQueueName as resolveQueueName } from "../utils/queueName";
+import { computeStatsSummary } from "./gamePlayerStats";
 
 // 模块作用域内存缓存单例
 let cachedSummoner: SummonerDisplay | null = null;
@@ -39,30 +42,8 @@ export function useMatchHistory() {
 
   // 游戏模式筛选
   const selectedQueue = ref<number | null>(null);
-  const QUEUE_OPTIONS = [
-    { id: null, label: "全部" },
-    { id: 2400, label: "海克斯大乱斗" },
-    { id: 2450, label: "经典海斗" },
-    { id: 450, label: "极地大乱斗" },
-    { id: 430, label: "匹配模式" },
-    { id: 420, label: "单双排位" },
-    { id: 440, label: "灵活排位" },
-  ];
+  const QUEUE_OPTIONS = QUEUE_FILTER_OPTIONS;
   const showQueueDropdown = ref(false);
-
-  const TIER_MAP: Record<string, string> = {
-    NONE: "无段位",
-    IRON: "坚韧黑铁",
-    BRONZE: "英勇黄铜",
-    SILVER: "不屈白银",
-    GOLD: "荣耀黄金",
-    PLATINUM: "华贵铂金",
-    EMERALD: "流光翡翠",
-    DIAMOND: "璀璨钻石",
-    MASTER: "超凡大师",
-    GRANDMASTER: "傲世宗师",
-    CHALLENGER: "最强王者",
-  };
 
   // 计算属性
   const filteredMatches = computed(() => {
@@ -80,41 +61,7 @@ export function useMatchHistory() {
     return rankedQueues.value.find((q) => q.queueType === "RANKED_FLEX_SR") || null;
   });
 
-  const statsSummary = computed(() => {
-    if (recentMatches.value.length === 0) return null;
-    let wins = 0;
-    let losses = 0;
-    let kills = 0;
-    let deaths = 0;
-    let assists = 0;
-    const champMap: Record<number, { id: number; icon: string; count: number }> = {};
-
-    for (const m of recentMatches.value) {
-      if (m.win) wins++;
-      else losses++;
-      kills += m.kills;
-      deaths += m.deaths;
-      assists += m.assists;
-
-      if (!champMap[m.championId]) {
-        champMap[m.championId] = {
-          id: m.championId,
-          icon: m.championIconUrl,
-          count: 0,
-        };
-      }
-      champMap[m.championId].count++;
-    }
-
-    const topChamps = Object.values(champMap)
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 6);
-
-    const kdaRatio =
-      deaths === 0 ? "Perfect" : ((kills + assists) / deaths).toFixed(1);
-
-    return { wins, losses, kills, deaths, assists, kda: kdaRatio, topChamps };
-  });
+  const statsSummary = computed(() => computeStatsSummary(recentMatches.value));
 
   // ─── 数据加载 ───
 
@@ -203,7 +150,6 @@ export function useMatchHistory() {
       );
       if (resp.success && resp.data && resp.data.queues) {
         rankedQueues.value = resp.data.queues;
-        cachedRankedQueues = rankedQueues.value;
       }
     } catch (e) {
       console.error("获取排位段位数据失败:", e);
@@ -212,6 +158,8 @@ export function useMatchHistory() {
 
   // 对局结束后仅刷新召唤师头部数据（等级等），不重复拉取战绩。
   // 战绩刷新由 MatchHistoryTab 的重试逻辑统一负责，避免双重请求。
+  // 注意：不更新 lastFetchedTime——该时间戳表示「整包缓存」的新鲜度，
+  // 只更新 summoner 时抬高会让后续 loadSummoner(false) 在 20s 内返回过期战绩。
   async function refreshSummonerOnly() {
     if (isViewingOther.value) return;
     try {
@@ -219,7 +167,6 @@ export function useMatchHistory() {
       if (summoner.value?.puuid) {
         currentLoginPuuid.value = summoner.value.puuid;
         cachedSummoner = summoner.value;
-        lastFetchedTime = Date.now();
       }
     } catch (e) {
       console.error("刷新召唤师数据失败:", e);
@@ -234,7 +181,6 @@ export function useMatchHistory() {
         puuid, 0, targetCount, isGameEndSync,
       );
       matches.value = raw.slice(0, targetCount);
-      cachedMatches = matches.value;
       updateRecentMatchesCache(puuid, raw);
     } catch (e) {
       console.error("获取战绩历史失败:", e);
@@ -259,8 +205,6 @@ export function useMatchHistory() {
       .slice(0, careerGamesNumber.value);
 
     recentMatches.value = merged;
-    cachedRecentMatches = merged;
-
     lazySetItem(MATCHES_CACHE_KEY(puuid), merged);
   }
 
@@ -272,25 +216,19 @@ export function useMatchHistory() {
   }
 
   function formatRank(queue: RankDisplaySource | null) {
-    if (!queue || !queue.tier || queue.tier === "NONE") return "--";
-    const tierCn = TIER_MAP[queue.tier] || queue.tier;
+    if (!queue) return "--";
     const raw = queue.rank && queue.rank !== "NA" ? queue.rank : queue.division;
-    const division = !raw || raw === "NA" ? "" : " " + raw;
-    return `${tierCn}${division}`;
+    return formatRankDisplay(queue.tier, raw);
   }
 
   function formatHighestRank(queue: RankDisplaySource | null) {
-    if (!queue || !queue.highestTier || queue.highestTier === "NONE") return "--";
-    const tierCn = TIER_MAP[queue.highestTier] || queue.highestTier;
-    const division = !queue.highestRank || queue.highestRank === "NA" ? "" : " " + queue.highestRank;
-    return `${tierCn}${division}`;
+    if (!queue) return "--";
+    return formatRankDisplay(queue.highestTier, queue.highestRank);
   }
 
   function formatPrevSeasonRank(queue: RankDisplaySource | null) {
-    if (!queue || !queue.previousSeasonEndTier || queue.previousSeasonEndTier === "NONE") return "--";
-    const tierCn = TIER_MAP[queue.previousSeasonEndTier] || queue.previousSeasonEndTier;
-    const division = !queue.previousSeasonEndRank || queue.previousSeasonEndRank === "NA" ? "" : " " + queue.previousSeasonEndRank;
-    return `${tierCn}${division}`;
+    if (!queue) return "--";
+    return formatRankDisplay(queue.previousSeasonEndTier, queue.previousSeasonEndRank);
   }
 
   async function copyRiotId() {
@@ -332,18 +270,7 @@ export function useMatchHistory() {
   }
 
   function getQueueName(m: MatchDisplay): string {
-    const key = `gameModes.${m.queueId}`;
-    if (te(key)) {
-      const translation = t(key);
-      if (
-        (translation.includes("云顶") || translation.includes("TFT")) &&
-        !m.name.includes("云顶") && !m.name.includes("TFT")
-      ) {
-        return m.name;
-      }
-      return translation;
-    }
-    return m.name;
+    return resolveQueueName(m.queueId, m.name, { t, te });
   }
 
   function getKdaClass(kda: string): string {

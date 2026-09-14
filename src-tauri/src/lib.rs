@@ -3,6 +3,7 @@ pub mod auto_tag;
 pub mod commands;
 pub mod config;
 pub mod lcu;
+pub mod lcu_ops;
 pub mod logging;
 pub mod loot;
 pub mod parsers;
@@ -10,21 +11,20 @@ pub mod portable_updater;
 pub mod runtime;
 pub mod saved_players;
 pub mod signalr;
-pub mod tools;
+pub mod state;
 pub mod updater;
 pub mod upload;
 
-use crate::updater::{PendingUpdate, UpdateInfo};
+use crate::state::{AgentRuntime, BenchRuntime, LcuRuntime, SignalrRuntime, UpdaterRuntime};
 use base64::Engine;
 use lcu::client::TauriBuilderExt;
-use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::sync::Mutex;
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::window::Effect;
 use tauri::Emitter;
 use tauri::Manager;
-use tokio::sync::{mpsc, watch, RwLock, Semaphore};
+use tokio::sync::{mpsc, RwLock};
 
 /// 包装 tauri::async_runtime::spawn，捕获并记录后台任务异常终止。
 /// 不会丢失 JoinHandle 的错误信息，避免任务静默崩溃。
@@ -51,36 +51,22 @@ pub struct LcuClient {
     pub http_client: reqwest::Client,
 }
 
-/// 供 Tauri 管理的全局状态
+/// 供 Tauri 管理的全局状态。
+/// 高频跨域字段（config 等）挂顶层；LCU / agent / 更新 / 板凳席按域聚合到 `state.rs`。
 pub struct AppState {
-    pub lcu_client: Arc<RwLock<Option<LcuClient>>>,
+    /// LCU 连接、静态资源、API 并发、WS 取消
+    pub lcu: LcuRuntime,
     pub config: Arc<RwLock<config::AppConfig>>,
-    /// LCU 连接后加载的游戏资源路径映射（物品/技能/符文 iconPath）
-    pub game_data: Arc<RwLock<lcu::game_data::GameDataAssets>>,
-    /// BP agent 的选人会话发送端
-    pub bp_session_tx: mpsc::Sender<agents::auto_bp::ChampSelectSession>,
-    /// 游戏流程 agent 的事件发送端
-    pub gameflow_tx: mpsc::Sender<agents::auto_match::GameflowEvent>,
+    /// BP / 游戏流程 agent 通道与竞态控制
+    pub agents: AgentRuntime,
     /// 上传队列（可用于外部手动触发上传）
     pub upload_queue: Arc<upload::UploadQueue>,
-    /// WebSocket 连接取消信号发送端（新连接时发送取消旧循环）
-    pub ws_cancel_tx: Mutex<Option<watch::Sender<bool>>>,
-    /// LCU API 并发信号量（由 config.ApiConcurrencyNumber 控制）
-    pub api_semaphore: RwLock<Arc<Semaphore>>,
-    /// BP 状态重置标志（gameflow 阶段变化时置为 true，BP agent 检查后置 false）
-    pub bp_reset_flag: AtomicBool,
-    /// BP 锁定后台任务版本号（用于标记和防止残留协程竞态）
-    pub bp_task_id: AtomicU64,
-    /// 后台下载进行中标志，防止重复启动多个下载
-    pub is_downloading: AtomicBool,
-    /// 正在后台下载的更新信息
-    pub downloading_update: Mutex<Option<UpdateInfo>>,
-    /// 后台已下载完成的待安装更新
-    pub pending_update: Mutex<Option<PendingUpdate>>,
-    /// 大乱斗板凳席：本局当前玩家拥有过的英雄列表（用于悬浮窗挂载时主动拉取）
-    pub bench_my_champions: Mutex<Vec<i64>>,
-    /// 记录上一次的 gameflow 阶段，避免阶段重复事件造成重复清空历史英雄缓存
-    pub last_gameflow_phase: Mutex<String>,
+    /// 自动更新下载/安装状态
+    pub updater: UpdaterRuntime,
+    /// 大乱斗板凳席悬浮窗缓存
+    pub bench: BenchRuntime,
+    /// SignalR Hub 运行时
+    pub signalr: SignalrRuntime,
     /// SQLite 连接（保存的玩家）
     pub saved_db: Arc<Mutex<rusqlite::Connection>>,
     /// 当前对局信息缓存（对局结束记录相遇时使用）
@@ -99,7 +85,7 @@ pub struct LcuParams {
 impl AppState {
     /// 获取 LCU 连接读锁，未连接时返回错误
     pub async fn lcu(&self) -> Result<tokio::sync::RwLockReadGuard<'_, Option<LcuClient>>, String> {
-        let lock = self.lcu_client.read().await;
+        let lock = self.lcu.client.read().await;
         if lock.is_some() {
             Ok(lock)
         } else {
@@ -138,7 +124,7 @@ fn activate_main_window_with_mica(app: &tauri::AppHandle) {
             .map(|cfg| cfg.personalization.mica_enabled)
             .unwrap_or(false);
         if is_mica_enabled {
-            let _ = crate::commands::tools::set_mica_effect(app.clone(), true);
+            let _ = crate::commands::os_shell::set_mica_effect(app.clone(), true);
         }
     }
 }
@@ -199,9 +185,9 @@ pub fn run() {
             let upload_trigger = upload::UploadTrigger::new(upload_queue.clone());
 
             // 初始化全局状态
-            let lcu_state: Arc<RwLock<Option<LcuClient>>> = Arc::new(RwLock::new(None));
-            let game_data: Arc<RwLock<lcu::game_data::GameDataAssets>> =
-                Arc::new(RwLock::new(lcu::game_data::GameDataAssets::default()));
+            let lcu_runtime = LcuRuntime::new(api_concurrency);
+            let lcu_state = lcu_runtime.client.clone();
+            let game_data = lcu_runtime.game_data.clone();
             let saved_db = match saved_players::init_db() {
                 Ok(conn) => {
                     log::info!("SQLite 数据库已就绪");
@@ -215,21 +201,13 @@ pub fn run() {
                 }
             };
             let state = AppState {
-                lcu_client: lcu_state.clone(),
+                lcu: lcu_runtime,
                 config: app_config_arc.clone(),
-                game_data: game_data.clone(),
-                bp_session_tx: bp_tx,
-                gameflow_tx,
+                agents: AgentRuntime::new(bp_tx, gameflow_tx),
                 upload_queue,
-                ws_cancel_tx: Mutex::new(None),
-                api_semaphore: RwLock::new(Arc::new(Semaphore::new(api_concurrency))),
-                bp_reset_flag: AtomicBool::new(false),
-                bp_task_id: AtomicU64::new(0),
-                is_downloading: AtomicBool::new(false),
-                downloading_update: Mutex::new(None),
-                pending_update: Mutex::new(None),
-                bench_my_champions: Mutex::new(Vec::new()),
-                last_gameflow_phase: Mutex::new(String::new()),
+                updater: UpdaterRuntime::default(),
+                bench: BenchRuntime::default(),
+                signalr: SignalrRuntime::default(),
                 saved_db,
                 current_game_cache: Mutex::new(None),
             };
@@ -334,33 +312,32 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            greet,
             lcu::client::call_lcu_api,
             lcu::client::get_lcu_asset,
             lcu::client::get_lcu_assets,
             parsers::summoner::get_current_summoner,
-            parsers::match_parser::get_match_history,
-            parsers::match_parser::get_match_history_sgp,
-            parsers::match_parser::get_recent_teammates,
-            parsers::game_info::get_game_player_summaries,
+            parsers::match_parser::history::get_match_history,
+            parsers::match_parser::history::get_match_history_sgp,
+            parsers::match_parser::history::get_match_history_merged,
+            parsers::match_parser::teammates::get_recent_teammates,
             parsers::game_info::get_player_fate_info,
             parsers::tft::data::get_tft_data,
             parsers::tft::rank::get_tft_ranked_stats,
             parsers::tft::history::get_tft_match_history,
             parsers::tft::augments::get_tft_augments,
-            tools::create_5v5_practice_lobby,
-            tools::aram_reroll_and_swap_back,
-            tools::apply_rune_page,
-            tools::get_lcu_zoom,
-            tools::fix_lcu_window,
-            tools::clear_game_cache,
-            tools::open_log_folder,
-            tools::fetch_opgg_data,
-            tools::fetch_tft_meta_decks,
-            tools::get_champion_skins,
-            tools::get_game_settings_readonly,
-            tools::set_game_settings_readonly,
-            tools::spectate_directly,
+            lcu_ops::create_5v5_practice_lobby,
+            lcu_ops::aram_reroll_and_swap_back,
+            lcu_ops::apply_rune_page,
+            lcu_ops::get_lcu_zoom,
+            lcu_ops::fix_lcu_window,
+            lcu_ops::clear_game_cache,
+            lcu_ops::open_log_folder,
+            lcu_ops::fetch_opgg_data,
+            lcu_ops::fetch_tft_meta_decks,
+            lcu_ops::get_champion_skins,
+            lcu_ops::get_game_settings_readonly,
+            lcu_ops::set_game_settings_readonly,
+            lcu_ops::spectate_directly,
             loot::open::get_openable_loots,
             loot::open::batch_open_loots,
             loot::open::smart_open_all_loots,
@@ -375,19 +352,20 @@ pub fn run() {
             commands::config::get_close_to_tray,
             commands::lcu::get_lcu_connection_info,
             commands::lcu::get_map_side,
-            commands::tools::detect_lol_path,
-            commands::tools::detect_wegame_path,
-            commands::tools::select_lol_folder,
-            commands::tools::select_folder,
-            commands::tools::open_screenshot_folder,
-            commands::tools::set_mica_effect,
-            commands::tools::launch_lol_client,
+            commands::os_shell::detect_lol_path,
+            commands::os_shell::detect_wegame_path,
+            commands::os_shell::select_lol_folder,
+            commands::os_shell::select_folder,
+            commands::os_shell::open_screenshot_folder,
+            commands::os_shell::set_mica_effect,
+            commands::os_shell::launch_lol_client,
             commands::lcu::get_game_data_assets,
             commands::lcu::get_bench_my_champions,
-            commands::tools::fetch_github_text,
-            commands::tools::get_release_changelog,
-            upload::upload_single_match,
-            upload::batch_upload_matches,
+            commands::lcu::get_live_game_teams,
+            commands::os_shell::fetch_github_text,
+            commands::os_shell::get_release_changelog,
+            upload::commands::upload_single_match,
+            upload::commands::batch_upload_matches,
             signalr::get_signalr_status,
             updater::check_update,
             updater::install_update,
@@ -395,25 +373,20 @@ pub fn run() {
             portable_updater::check_portable_update,
             portable_updater::download_portable_update,
             portable_updater::apply_portable_update,
-            commands::tools::show_bench_overlay_window,
-            saved_players::save_saved_player,
-            saved_players::set_player_list_kind,
-            saved_players::query_all_saved_players,
-            saved_players::query_encountered_games,
-            saved_players::get_saved_players_map,
-            saved_players::delete_saved_player,
-            saved_players::export_tagged_players_to_json_file,
-            saved_players::import_tagged_players_from_json_file,
-            saved_players::backfill_saved_player_identity,
+            commands::os_shell::show_bench_overlay_window,
+            saved_players::commands::save_saved_player,
+            saved_players::commands::set_player_list_kind,
+            saved_players::commands::query_all_saved_players,
+            saved_players::commands::query_encountered_games,
+            saved_players::commands::get_saved_players_map,
+            saved_players::commands::delete_saved_player,
+            saved_players::import_export::export_tagged_players_to_json_file,
+            saved_players::import_export::import_tagged_players_from_json_file,
+            saved_players::import_export::backfill_saved_player_identity,
             runtime::is_portable,
         ])
         .run(context)
         .expect("error while running tauri application");
-}
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("你好, {}! 欢迎使用 Yuumi!", name)
 }
 
 /// 便携版更新 helper 进程入口判定（main() 第一行调用）。
