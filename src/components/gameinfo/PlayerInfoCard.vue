@@ -350,9 +350,8 @@ function copyName(e: MouseEvent) {
         v-else-if="matches.length"
         class="match-list"
         key-field="gameId"
-        :item-size="30"
+        :item-size="36"
         :items="matches"
-        item-resizable
       >
         <template #default="{ item: match }">
           <div
@@ -366,7 +365,10 @@ function copyName(e: MouseEvent) {
             <LcuImage :src="getChampionIcon(match.championId)" class="mi-champ" />
             <div class="mi-mid">
               <span class="mi-mode">{{ match.name || "" }}</span>
-              <span class="mi-time">{{ match.shortTime || match.time }}</span>
+              <span class="mi-time">
+                {{ match.shortTime || match.time }}
+                <span v-if="match.remake" class="mi-remake-tag">重开</span>
+              </span>
             </div>
             <div class="mi-kda">
               <span class="k">{{ match.kills }}</span>
@@ -388,14 +390,14 @@ function copyName(e: MouseEvent) {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 7px 8px 6px;
-  border-radius: 6px;
+  gap: 5px;
+  padding: 8px 9px 7px;
+  border-radius: 8px;
   border: 2px solid transparent;
-  background: rgba(255, 255, 255, 0.62);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.07);
   overflow: hidden;
   height: 100%;
   min-height: 0;
@@ -736,26 +738,31 @@ function copyName(e: MouseEvent) {
 .mi {
   display: flex;
   align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 2px 5px;
-  border-radius: 3px;
+  gap: 6px;
+  height: 34px;
+  margin-bottom: 2px;
+  padding: 0 6px;
+  border-radius: 4px;
   flex-shrink: 0;
+  transition: filter 0.12s ease;
+}
+.mi:hover {
+  filter: brightness(1.06);
 }
 .mi-win {
-  background: rgba(59, 130, 246, 0.13);
+  background: rgba(59, 130, 246, 0.14);
 }
 .mi-loss {
-  background: rgba(220, 38, 38, 0.16);
+  background: rgba(220, 38, 38, 0.17);
 }
 .mi-remake {
   background: rgba(156, 163, 175, 0.14);
 }
 
 .mi-champ {
-  width: 22px;
-  height: 22px;
-  border-radius: 3px;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -765,10 +772,11 @@ function copyName(e: MouseEvent) {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  line-height: 1.15;
+  gap: 1px;
+  line-height: 1.2;
 }
 .mi-mode {
-  font-size: 10.5px;
+  font-size: 11.5px;
   font-weight: 600;
   color: var(--text-color, #111827);
   overflow: hidden;
@@ -776,11 +784,24 @@ function copyName(e: MouseEvent) {
   white-space: nowrap;
 }
 .mi-time {
-  font-size: 9.5px;
+  font-size: 10px;
   color: var(--text-dimmed, #9ca3af);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mi-remake-tag {
+  display: inline-flex;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(156, 163, 175, 0.25);
+  color: #6b7280;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 .mi-kda {
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;

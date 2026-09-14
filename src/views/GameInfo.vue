@@ -276,7 +276,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
 
 <style scoped>
 .game-info {
-  padding: 12px 16px 12px 8px;
+  padding: 10px 14px 10px 8px;
   background-color: transparent;
   flex: 1;
   box-sizing: border-box;
@@ -407,7 +407,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
   /* 固定卡片高度，战绩区在卡内滚动 */
-  grid-auto-rows: 360px;
+  grid-auto-rows: 380px;
 }
 
 /* 窄窗口时自动 3 列 / 2 列 */
