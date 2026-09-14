@@ -229,6 +229,9 @@ pub struct FunctionsConfig {
     /// 自动打标敏感度：0 严格 / 1 标准 / 2 宽松
     #[serde(default = "default_auto_tag_sensitivity")]
     pub auto_tag_sensitivity: u32,
+    /// 选人阶段发现黑名单队友时提示秒退（默认开启；仅提醒，不自动秒）
+    #[serde(default = "default_true")]
+    pub enable_dodge_reminder: bool,
 }
 
 impl Default for FunctionsConfig {
@@ -291,6 +294,7 @@ impl Default for FunctionsConfig {
             enable_auto_tag_reminder: false,
             enable_auto_player_tag: true,
             auto_tag_sensitivity: 1,
+            enable_dodge_reminder: true,
         }
     }
 }

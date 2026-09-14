@@ -1188,6 +1188,8 @@ fn spawn_radar_check(app_handle: AppHandle) {
                 "manualTag": m.tag,
                 "relation": m.last_relation,
                 "encounterCount": m.encounter_count,
+                "listKind": m.list_kind,
+                "listReason": m.list_reason,
             }));
         }
 

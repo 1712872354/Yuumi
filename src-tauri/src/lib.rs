@@ -397,6 +397,7 @@ pub fn run() {
             portable_updater::apply_portable_update,
             commands::tools::show_bench_overlay_window,
             saved_players::save_saved_player,
+            saved_players::set_player_list_kind,
             saved_players::query_all_saved_players,
             saved_players::query_encountered_games,
             saved_players::get_saved_players_map,

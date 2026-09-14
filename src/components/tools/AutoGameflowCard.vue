@@ -53,6 +53,12 @@ function updateAutoTagSensitivity(value: number) {
   config.value.Functions.AutoTagSensitivity = value;
   triggerAutoSave();
 }
+
+function updateDodgeReminder(value: boolean) {
+  if (!config?.value) return;
+  config.value.Functions.EnableDodgeReminder = value;
+  triggerAutoSave();
+}
 </script>
 
 <template>
@@ -162,6 +168,13 @@ function updateAutoTagSensitivity(value: number) {
             {{ opt.label }}
           </button>
         </div>
+      </div>
+      <div class="setting-row">
+        <span class="setting-label">{{ t("tools.autoGameflow.dodgeReminderLabel", "拉黑队友秒退提醒") }}</span>
+        <n-switch
+          :value="config.Functions.EnableDodgeReminder !== false"
+          @update:value="updateDodgeReminder"
+        />
       </div>
     </n-collapse-item>
   </n-collapse>

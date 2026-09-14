@@ -9,6 +9,8 @@ import {
   type PremadePlayerLike,
 } from "../../types/gameInfo";
 import type { SavedPlayerMarker } from "../../api/lcu";
+import { setPlayerListKind } from "../../api/lcu";
+import { useToast } from "../../composables/useToast";
 import { usePlayerSearch } from "../../composables/usePlayerSearch";
 import LcuImage from "../LcuImage.vue";
 import IronMedal from "../../assets/ranked-icons/iron.png";
@@ -55,6 +57,7 @@ const props = defineProps<{
 
 const { t } = useI18n();
 const { handleCareerClick } = usePlayerSearch();
+const { showToast } = useToast();
 const openOpgg = inject<(championId?: number) => void>("openOpgg");
 
 function onGuideClick(e: MouseEvent) {
@@ -238,6 +241,14 @@ const cardTags = computed(() => {
   const puuid = data.info?.puuid;
   if (puuid && props.savedMap?.[puuid]) {
     const marker = props.savedMap[puuid];
+    if (marker.listKind === "black") {
+      tags.push({
+        text: marker.listReason ? `拉黑:${marker.listReason}` : "拉黑",
+        cls: "tag-black",
+      });
+    } else if (marker.listKind === "white") {
+      tags.push({ text: "白名单", cls: "tag-white" });
+    }
     if (marker.tag) {
       tags.push({ text: t("gameInfo.tagMarked"), cls: "tag-marked" });
     }
@@ -319,6 +330,33 @@ function copyGameId(e: MouseEvent, gameId: number) {
   if (!gameId) return;
   navigator.clipboard?.writeText(String(gameId)).catch(() => {});
 }
+
+async function setList(kind: "black" | "white" | "") {
+  const p = summonerInfo.value?.puuid;
+  if (!p || !props.selfPuuid) return;
+  try {
+    let reason: string | null = null;
+    if (kind === "black") {
+      reason = window.prompt("拉黑理由（可空）") ?? "";
+      if (reason === null) return;
+      reason = reason.trim() || null;
+    }
+    await setPlayerListKind(
+      props.selfPuuid,
+      p,
+      kind,
+      reason,
+      displayName.value || null,
+    );
+    showToast(
+      kind === "black" ? "已拉黑" : kind === "white" ? "已加白" : "已移出名单",
+      "success",
+    );
+  } catch (e) {
+    console.error("[PlayerInfoCard] 名单操作失败:", e);
+    showToast("名单操作失败", "error");
+  }
+}
 </script>
 
 <template>
@@ -364,6 +402,30 @@ function copyGameId(e: MouseEvent, gameId: number) {
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
             </svg>
           </button>
+          <template v-if="selfPuuid && summonerInfo?.puuid && summonerInfo.puuid !== selfPuuid">
+            <button
+              class="list-btn black"
+              title="拉黑"
+              @click.stop="setList('black')"
+            >
+              黑
+            </button>
+            <button
+              class="list-btn white"
+              title="加白"
+              @click.stop="setList('white')"
+            >
+              白
+            </button>
+            <button
+              v-if="savedMap?.[summonerInfo.puuid]?.listKind"
+              class="list-btn clear"
+              title="移出名单"
+              @click.stop="setList('')"
+            >
+              ×
+            </button>
+          </template>
         </div>
 
         <div class="rank-row">
@@ -854,6 +916,44 @@ function copyGameId(e: MouseEvent, gameId: number) {
 .tag-rel-enemy {
   background: rgba(244, 63, 94, 0.1);
   color: #e11d48;
+}
+.tag-black {
+  background: rgba(127, 29, 29, 0.2);
+  color: #fecaca;
+  font-weight: 800;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.45);
+}
+.tag-white {
+  background: rgba(16, 185, 129, 0.15);
+  color: #047857;
+  font-weight: 700;
+}
+.list-btn {
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  padding: 0;
+  line-height: 18px;
+  margin-left: 2px;
+}
+.list-btn.black {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+}
+.list-btn.white {
+  background: rgba(16, 185, 129, 0.15);
+  color: #059669;
+}
+.list-btn.clear {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text-dimmed);
+}
+.list-btn:hover {
+  filter: brightness(1.15);
 }
 
 /* ─── 战绩 ─── */

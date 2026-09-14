@@ -486,6 +486,8 @@ export interface FunctionsConfig {
   EnableAutoPlayerTag: boolean;
   /** 0 严格 / 1 标准 / 2 宽松 */
   AutoTagSensitivity: number;
+  /** 选人发现黑名单队友时提示秒退 */
+  EnableDodgeReminder: boolean;
 }
 
 export interface OtherConfig {
@@ -566,6 +568,9 @@ export interface SavedPlayer {
   autoScore?: number | null;
   autoReason?: string | null;
   autoTagStats?: string | null;
+  lastRelation?: string | null;
+  listKind?: string;
+  listReason?: string | null;
 }
 
 export interface EncounteredGame {
@@ -591,6 +596,9 @@ export interface SavedPlayerMarker {
   /** ally / enemy */
   lastRelation?: string | null;
   lastMetAt?: number | null;
+  /** '' | black | white */
+  listKind?: string;
+  listReason?: string | null;
 }
 
 export interface SaveSavedPlayerInput {
@@ -644,6 +652,22 @@ export const queryEncounteredGames = (
 /** 保存玩家 / 更新 tag */
 export const saveSavedPlayer = (dto: SaveSavedPlayerInput) =>
   invoke<void>("save_saved_player", { dto });
+
+/** 设置黑白名单：kind = '' | 'black' | 'white' */
+export const setPlayerListKind = (
+  selfPuuid: string,
+  puuid: string,
+  kind: string,
+  reason?: string | null,
+  summonerName?: string | null,
+) =>
+  invoke<void>("set_player_list_kind", {
+    selfPuuid,
+    puuid,
+    kind,
+    reason: reason ?? null,
+    summonerName: summonerName ?? null,
+  });
 
 /** 回填保存玩家的召唤师 ID（tagLine），返回更新的数量 */
 export const backfillSavedPlayerIdentity = () =>

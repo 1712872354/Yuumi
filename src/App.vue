@@ -244,19 +244,30 @@ onMounted(async () => {
       autoTag?: string | null;
       manualTag?: string | null;
       relation?: string | null;
+      listKind?: string;
+      listReason?: string | null;
     }>;
   }>("radar-alert", (event) => {
     const players = event.payload?.players || [];
     if (!players.length) return;
-    for (const p of players.slice(0, 3)) {
-      const isGood = p.autoTag === "大腿" || p.autoTag === "C位";
+    // 黑名单优先且更醒目
+    const blacks = players.filter((p) => p.listKind === "black");
+    if (blacks.length) {
+      for (const p of blacks.slice(0, 2)) {
+        const why = p.listReason || p.tag || "已拉黑";
+        showToast(`🚫 拉黑玩家 ${p.name}：${why}`, "error");
+      }
+      const dodgeOn = appConfig.value?.Functions?.EnableDodgeReminder !== false;
+      if (dodgeOn) {
+        showToast("检测到黑名单队友，可考虑秒退（不会自动秒）", "warning");
+      }
+    }
+    for (const p of players.filter((x) => x.listKind !== "black").slice(0, 3)) {
+      const isGood = p.autoTag === "大腿" || p.autoTag === "C位" || p.listKind === "white";
       const icon = isGood ? "✓" : p.autoTag === "坑" || p.autoTag === "演员" ? "⚠" : "📌";
       const rel = p.relation === "enemy" ? "曾对手" : p.relation === "ally" ? "曾同队" : "";
       const parts = [p.tag, rel].filter(Boolean).join(" · ");
       showToast(`${icon} 雷达 ${p.name}：${parts || "已标记"}`, isGood ? "success" : "warning");
-    }
-    if (players.length > 3) {
-      showToast(`…另有 ${players.length - 3} 名已知玩家`, "info");
     }
   });
 

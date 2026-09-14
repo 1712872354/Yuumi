@@ -82,6 +82,15 @@ pub fn init_db() -> rusqlite::Result<Connection> {
     if !existing_cols.iter().any(|c| c == "last_relation") {
         conn.execute_batch("ALTER TABLE saved_players ADD COLUMN last_relation TEXT;")?;
     }
+    // 黑白名单：list_kind = '' | 'black' | 'white'；list_reason 为拉黑/加白理由
+    if !existing_cols.iter().any(|c| c == "list_kind") {
+        conn.execute_batch(
+            "ALTER TABLE saved_players ADD COLUMN list_kind TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    if !existing_cols.iter().any(|c| c == "list_reason") {
+        conn.execute_batch("ALTER TABLE saved_players ADD COLUMN list_reason TEXT;")?;
+    }
 
     // 迁移：将因此前数据采集 bug 误记录为 '0' 的对局模式默认全部更新为海克斯大乱斗 '2400'
     let _ = conn.execute(
@@ -166,6 +175,11 @@ pub struct SavedPlayerDto {
     /// 最近一次同局关系：ally / enemy
     #[serde(default)]
     pub last_relation: Option<String>,
+    /// 名单类型：'' 普通 / 'black' 拉黑 / 'white' 加白
+    #[serde(default)]
+    pub list_kind: String,
+    #[serde(default)]
+    pub list_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -206,13 +220,15 @@ fn row_to_saved_player(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedPlayerD
         auto_reason: row.get(13).ok().flatten(),
         auto_tag_stats: row.get(14).ok().flatten(),
         last_relation: row.get(15).ok().flatten(),
-        last_queue_type: row.get(16).ok().flatten(),
-        encounter_count: row.get::<usize, i32>(17).unwrap_or(1),
+        list_kind: row.get::<_, String>(16).unwrap_or_default(),
+        list_reason: row.get(17).ok().flatten(),
+        last_queue_type: row.get(18).ok().flatten(),
+        encounter_count: row.get::<usize, i32>(19).unwrap_or(1),
     })
 }
 
 const SAVED_PLAYER_COLS: &str =
-    "puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at, auto_tag, auto_score, auto_reason, auto_tag_stats, last_relation";
+    "puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at, auto_tag, auto_score, auto_reason, auto_tag_stats, last_relation, list_kind, list_reason";
 
 fn row_to_encountered(row: &rusqlite::Row<'_>) -> rusqlite::Result<EncounteredGameDto> {
     Ok(EncounteredGameDto {
@@ -472,7 +488,46 @@ pub async fn save_saved_player(
     .await
 }
 
-/// 分页查询全部保存玩家（按最近相遇/更新时间倒序）
+/// 设置黑白名单：kind = '' 清除 / 'black' 拉黑 / 'white' 加白
+/// 玩家不存在时自动 upsert 一行（便于直接从战绩/雷达拉黑）
+#[tauri::command]
+pub async fn set_player_list_kind(
+    app_state: tauri::State<'_, AppState>,
+    self_puuid: String,
+    puuid: String,
+    kind: String,
+    reason: Option<String>,
+    summoner_name: Option<String>,
+) -> Result<(), String> {
+    let kind = match kind.as_str() {
+        "black" | "white" | "" => kind,
+        other => return Err(format!("无效名单类型: {other}")),
+    };
+    with_db(app_state.inner(), move |conn| {
+        let ts = now();
+        conn.execute(
+            "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, update_at, last_met_at, list_kind, list_reason)
+             VALUES (?1, ?2, '', '', NULL, ?3, 0, ?4, ?4, ?5, ?6)
+             ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
+               list_kind = excluded.list_kind,
+               list_reason = excluded.list_reason,
+               summoner_name = CASE WHEN excluded.summoner_name = '' THEN saved_players.summoner_name ELSE excluded.summoner_name END,
+               update_at = excluded.update_at",
+            params![
+                puuid,
+                self_puuid,
+                summoner_name.unwrap_or_default(),
+                ts,
+                kind,
+                reason
+            ],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })
+    .await
+}
+
 /// filter: "tagged" 只看已标记玩家，"multiple" 只看多次相遇玩家，其他为全部
 #[tauri::command]
 pub async fn query_all_saved_players(
@@ -486,8 +541,10 @@ pub async fn query_all_saved_players(
     let page_size = page_size.unwrap_or(50).clamp(1, 200);
     let where_clause = match filter.as_deref() {
         Some("tagged") => {
-            " AND ((tag IS NOT NULL AND tag != '') OR (auto_tag IS NOT NULL AND auto_tag != ''))"
+            " AND ((tag IS NOT NULL AND tag != '') OR (auto_tag IS NOT NULL AND auto_tag != '') OR list_kind IN ('black', 'white'))"
         }
+        Some("black") => " AND list_kind = 'black'",
+        Some("white") => " AND list_kind = 'white'",
         Some("multiple") => " AND (SELECT COUNT(*) FROM encountered_games eg WHERE eg.puuid = saved_players.puuid AND eg.self_puuid = saved_players.self_puuid) >= 2",
         _ => "",
     }
@@ -538,6 +595,11 @@ pub struct SavedPlayerMarker {
     /// 最近相遇时间戳 ms
     #[serde(default)]
     pub last_met_at: Option<i64>,
+    /// '' / black / white
+    #[serde(default)]
+    pub list_kind: String,
+    #[serde(default)]
+    pub list_reason: Option<String>,
 }
 
 /// 获取全部保存玩家的精简映射：puuid → 标记信息（tag + 相遇次数）
@@ -565,10 +627,16 @@ pub async fn query_saved_players_map(
                          WHERE eg.puuid = sp.puuid AND eg.self_puuid = sp.self_puuid),
                         sp.auto_tag,
                         sp.last_relation,
-                        sp.last_met_at
+                        sp.last_met_at,
+                        sp.list_kind,
+                        sp.list_reason
                  FROM saved_players sp
                  WHERE sp.self_puuid = ?1
-                   AND ((sp.tag IS NOT NULL AND sp.tag != '') OR (sp.auto_tag IS NOT NULL AND sp.auto_tag != ''))",
+                   AND (
+                     (sp.tag IS NOT NULL AND sp.tag != '')
+                     OR (sp.auto_tag IS NOT NULL AND sp.auto_tag != '')
+                     OR sp.list_kind IN ('black', 'white')
+                   )",
             )
             .map_err(|e| e.to_string())?;
         let mut map = HashMap::new();
@@ -582,6 +650,8 @@ pub async fn query_saved_players_map(
                         auto_tag: r.get(3).ok().flatten(),
                         last_relation: r.get(4).ok().flatten(),
                         last_met_at: r.get(5).ok().flatten(),
+                        list_kind: r.get::<_, String>(6).unwrap_or_default(),
+                        list_reason: r.get(7).ok().flatten(),
                     },
                 ))
             })
