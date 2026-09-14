@@ -213,6 +213,29 @@ ws.rs → LCU WebSocket（新连接自动取消旧循环）
   └─→ UploadQueue → 外部 API（失败落盘 pending_uploads 重试）
 ```
 
+### GameInfo 对局信息页数据源
+
+```
+lcuStore（phase / champSelectSession / gameflowSession）
+        ↓
+useGamePlayerData（编排）
+  ├─ champSelectSnapshot     选人签名 / bot / 自定义 cell
+  ├─ gameflowTeamPipeline    session → 我/敌 → 合并 → 拉取 → live 兜底
+  ├─ playerDetailLoader      单人：身份/战绩/段位/熟练度/宿命
+  └─ gameInfoStore           主键 puuid（pending:cell）+ cell/sid 别名
+        ↓
+GameInfo.vue → findPlayerData → PlayerInfoCard
+旁路：querySavedPlayersMap（路人标记）、computePremadeColors（预组队色）
+```
+
+| 阶段 | 队伍列表 | 玩家详情 |
+|------|----------|----------|
+| ChampSelect | gameflow* → session.my/theirTeam → champSelect*Snapshot | 逐人 loadPlayerData |
+| GameStart / InProgress | gameflow*（身份合并后） | 同上 + live teams 补敌方 |
+| 非对局（保留盘开） | localStorage 恢复 | restorePlayers |
+
+视图读取统一走 `findPlayerData` / `store.getPlayer`，不要在组件里再扫多键。
+
 ## 窗口与 UI
 
 - **自定义标题栏**: `decorations: false`；最小化/最大化/关闭 + 返回导航 + 游戏阶段显示

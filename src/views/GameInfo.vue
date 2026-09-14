@@ -8,11 +8,10 @@ import { querySavedPlayersMap } from "../api/lcu";
 import {
   PREMADE_COLORS,
   getChampionIcon,
-  type PlayerData,
   type PremadePlayerLike,
 } from "../types/gameInfo";
 import { usePremadeGroup } from "../composables/usePremadeGroup";
-import { useGamePlayerData, isIdentityCompatible } from "../composables/useGamePlayerData";
+import { useGamePlayerData } from "../composables/useGamePlayerData";
 import LcuOfflineState from "../components/LcuOfflineState.vue";
 import PlayerInfoCard from "../components/gameinfo/PlayerInfoCard.vue";
 import LcuImage from "../components/LcuImage.vue";
@@ -36,6 +35,7 @@ const {
   theirTeam,
   shouldShowContent,
   currentSummonerPuuid,
+  findPlayerData,
 } = useGamePlayerData(
   appConfig,
   premadeColorsMy,
@@ -53,41 +53,8 @@ const { getPremadeIdx, myPremadeGroups, theirPremadeGroups } = usePremadeGroup(
   premadeColorsTheir,
 );
 
-function isSameIdentity(p: PremadePlayerLike, d: PlayerData | undefined): boolean {
-  if (!d) return false;
-  if (!d.info) return true;
-  const dSidReal = d.info.summonerId && d.info.summonerId !== p.cellId ? d.info.summonerId : 0;
-  if (!p.puuid && !p.summonerId && (d.info.puuid || dSidReal)) return false;
-  return isIdentityCompatible(d, { puuid: p.puuid, summonerId: p.summonerId, cellId: p.cellId });
-}
-
 function getPlayerData(p: PremadePlayerLike, idx: number, side: "ally" | "enemy") {
-  if (p.puuid) {
-    const byPuuid = playerData.value[p.puuid];
-    if (byPuuid && isSameIdentity(p, byPuuid)) return byPuuid;
-  }
-  if (p.summonerId) {
-    const bySid = playerData.value[p.summonerId];
-    if (bySid && isSameIdentity(p, bySid)) return bySid;
-  }
-  if (p.cellId !== undefined) {
-    const byCell = playerData.value[p.cellId];
-    if (byCell && isSameIdentity(p, byCell)) return byCell;
-  }
-  const offset = side === "enemy" ? 5 : 0;
-  const bySlot = playerData.value[offset + idx];
-  if (bySlot && isSameIdentity(p, bySlot)) return bySlot;
-
-  for (const key of Object.keys(playerData.value)) {
-    const d = playerData.value[key];
-    if (!d?.info) continue;
-    if (p.puuid && d.info.puuid && d.info.puuid === p.puuid) return d;
-    if (p.summonerId && d.info.summonerId && d.info.summonerId === p.summonerId) return d;
-    const pName = p.displayName || p.gameName || p.summonerName;
-    const dName = d.info.displayName || d.info.gameName;
-    if (pName && dName && pName === dName) return d;
-  }
-  return undefined;
+  return findPlayerData(p, idx, side);
 }
 
 const savedPlayerMap = ref<Record<string, SavedPlayerMarker>>({});

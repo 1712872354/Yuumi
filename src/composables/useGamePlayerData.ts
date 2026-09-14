@@ -9,7 +9,7 @@ import {
   fetchConfig,
   type AppConfig,
 } from "../api/lcu";
-import type { PremadePlayerLike } from "../types/gameInfo";
+import type { PlayerData, PremadePlayerLike } from "../types/gameInfo";
 import { computePremadeColors } from "./usePremadeGroup";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
 import { fetchPlayerMastery } from "./playerMastery";
@@ -37,6 +37,18 @@ import {
 export { fetchPlayerMastery } from "./playerMastery";
 export { NEW_PLAYER_MAX_LEVEL, isIdentityCompatible } from "./identityUtils";
 
+/**
+ * GameInfo 对局数据源（阶段 → 状态优先级）
+ *
+ * | 阶段 | 队伍列表 myTeam/theirTeam | 玩家详情 playerData |
+ * |------|---------------------------|---------------------|
+ * | ChampSelect | gameflow*Team → champSelectSession.myTeam/theirTeam → champSelect*Snapshot | 逐人 loadPlayerData |
+ * | GameStart / InProgress | gameflow*Team（session 合并身份后） | 同上 + live teams 兜底补齐敌方 |
+ * | 非对局（保留盘开启） | localStorage 恢复的 gameflow*Team | restorePlayers 后的主键表 |
+ *
+ * 内部主键：puuid（无身份 pending:{cellId}）；cellId/sid 仅别名。
+ * 视图读取请用 findPlayerData / store.getPlayer，勿再手写多键扫描。
+ */
 export function useGamePlayerData(
   appConfig: Ref<AppConfig | null>,
   premadeColorsMy: Ref<Record<number, number>>,
@@ -601,6 +613,37 @@ export function useGamePlayerData(
     refreshState();
   });
 
+  /**
+   * 按队伍成员身份查找已加载的 PlayerData。
+   * 优先 puuid/sid/cell（store 别名表），再退化到槽位与显示名匹配。
+   */
+  function findPlayerData(
+    p: PremadePlayerLike,
+    idx: number,
+    side: "ally" | "enemy",
+  ): PlayerData | undefined {
+    const incoming = {
+      puuid: p.puuid,
+      summonerId: p.summonerId,
+      cellId: p.cellId,
+    };
+    const hit = gameInfo.getPlayer(incoming);
+    if (hit) return hit;
+
+    const offset = side === "enemy" ? 5 : 0;
+    const bySlot = gameInfo.getPlayer({ cellId: offset + idx });
+    if (bySlot) return bySlot;
+
+    const pName = p.displayName || p.gameName || p.summonerName;
+    if (!pName) return undefined;
+    return gameInfo
+      .uniquePlayerList()
+      .find((d) => {
+        const dName = d.info?.displayName || d.info?.gameName;
+        return Boolean(dName && dName === pName);
+      });
+  }
+
   return {
     loading,
     error,
@@ -621,5 +664,6 @@ export function useGamePlayerData(
     refreshState,
     loadAllPlayers,
     loadFromGameflowSession,
+    findPlayerData,
   };
 }
