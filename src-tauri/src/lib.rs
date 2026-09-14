@@ -7,6 +7,7 @@ pub mod lcu_ops;
 pub mod logging;
 pub mod loot;
 pub mod parsers;
+pub mod pipeline_stats;
 pub mod portable_updater;
 pub mod runtime;
 pub mod saved_players;
@@ -350,6 +351,7 @@ pub fn run() {
             commands::config::get_config_load_error,
             commands::config::get_close_to_tray,
             commands::lcu::get_lcu_connection_info,
+            pipeline_stats::get_pipeline_stats,
             commands::lcu::get_map_side,
             commands::os_shell::detect_lol_path,
             commands::os_shell::detect_wegame_path,

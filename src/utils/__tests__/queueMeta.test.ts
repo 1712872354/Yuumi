@@ -2,9 +2,11 @@ import { describe, it, expect } from "vitest";
 import {
   formatRankDisplay,
   formatTierCn,
+  isTftQueue,
   QUEUE_FILTER_OPTIONS,
   QUEUE_NAME_MAP,
   TIER_MAP,
+  TFT_QUEUE_IDS,
 } from "../queueMeta";
 
 describe("formatTierCn", () => {
@@ -49,5 +51,13 @@ describe("queue meta", () => {
     expect(QUEUE_NAME_MAP[850]).toBe("人机对战");
     expect(QUEUE_NAME_MAP[1700]).toBe("斗魂竞技场");
     expect(QUEUE_NAME_MAP[1710]).toBe("斗魂竞技场");
+  });
+
+  it("isTftQueue matches shared TFT_QUEUE_IDS", () => {
+    for (const id of TFT_QUEUE_IDS) {
+      expect(isTftQueue(id)).toBe(true);
+    }
+    expect(isTftQueue(420)).toBe(false);
+    expect(isTftQueue(0)).toBe(false);
   });
 });

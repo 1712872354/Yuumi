@@ -7,8 +7,8 @@ export function lazySetItem(key: string, value: unknown) {
   const run = () => {
     try {
       localStorage.setItem(key, JSON.stringify(value));
-    } catch {
-      /* ignore */
+    } catch (e) {
+      console.debug(`[lazyStorage] 写入失败 (${key}, 可能超配额):`, e);
     }
   };
 

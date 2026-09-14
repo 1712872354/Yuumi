@@ -35,8 +35,8 @@ pub(super) fn spawn_cache_current_game(app_handle: AppHandle) {
             .map(|q| q as i32)
             .unwrap_or(0);
 
-        // 云顶对局不录入路人集（queueId 与前端 MatchHistoryTab 的 TFT_QUEUES 保持一致）
-        if matches!(queue_id, 1090 | 1100 | 1130 | 1160) {
+        // 云顶对局不录入路人集
+        if crate::parsers::match_parser::is_tft_queue(queue_id) {
             return;
         }
 
@@ -348,8 +348,8 @@ pub(super) async fn fetch_match_json_by_id(
             return Some(raw.clone());
         }
     }
-    // 找不到精确 gameId 时取最近一局（结算后 history 可能尚未带最新 id）
-    games.first().map(|g| g.get("json").unwrap_or(g).clone())
+    // 精确 gameId 未命中时跳过，避免对上一局误打标；仅 game_id==0（调用方未指定）才取最近一局
+    None
 }
 
 pub(super) fn spawn_radar_check(app_handle: AppHandle) {

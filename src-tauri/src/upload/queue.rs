@@ -65,13 +65,14 @@ impl UploadQueue {
             log::warn!("推入上传队列失败: {}", e);
         } else {
             set.insert(game_id);
+            crate::pipeline_stats::incr_upload_enqueued();
             log::info!("对局 {} 已加入上传队列", game_id);
         }
     }
 
     /// 读取本地 SQLite 数据库，将挂起的未完成任务全部拉起并排队重试
     pub async fn trigger_pending_retry(&self) {
-        let pending_items = load_pending_uploads(&self.app_handle);
+        let pending_items = load_pending_uploads(&self.app_handle).await;
         if pending_items.is_empty() {
             return;
         }
@@ -137,6 +138,7 @@ async fn upload_worker(
         match result {
             Ok(Ok(status)) => {
                 log::info!("对局 {} 上传完成: {}", game_id, status);
+                crate::pipeline_stats::incr_upload_success();
                 if status == "new" {
                     let _ =
                         app_handle.emit("upload-success", serde_json::json!({ "gameId": game_id }));
@@ -146,11 +148,13 @@ async fn upload_worker(
             }
             Ok(Err(e)) => {
                 log::warn!("对局 {} 上传处理失败: {}", game_id, e);
+                crate::pipeline_stats::incr_upload_failed();
                 let mut set = enqueued.lock().await;
                 set.remove(&game_id);
             }
             Err(_) => {
                 log::warn!("对局 {} 上传超时 (35s)", game_id);
+                crate::pipeline_stats::incr_upload_failed();
                 let mut set = enqueued.lock().await;
                 set.remove(&game_id);
             }

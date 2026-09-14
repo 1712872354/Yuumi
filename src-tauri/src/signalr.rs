@@ -130,8 +130,12 @@ fn clean_server_url(url: &str) -> String {
 
 /// 启动 SignalR Hub 连接。
 /// 连接到远程服务器 of `/lcuHub`，支持远程 LCU 查询和状态上报。
+/// 若已有实例在跑，先停止再启动，避免双连接竞态。
 pub fn start(app_handle: AppHandle, server_url: String, user_id: String) {
     crate::spawn_log_panic(async move {
+        // 配置热更新场景：先停旧连接，确保 cancel_tx 语义单一
+        stop(&app_handle).await;
+
         let server_url = clean_server_url(&server_url);
 
         let (cancel_tx, mut cancel_rx) = watch::channel(false);
@@ -220,18 +224,18 @@ async fn try_connect(
     };
 
     // 2. 构造带 connectionToken 的 WSS URL
+    let ws_base = server_url
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
     let ws_url = format!(
         "{}/lcuHub?id={}&userId={}",
-        server_url
-            .replace("http://", "ws://")
-            .replace("https://", "wss://"),
-        connection_token,
-        user_id
+        ws_base, connection_token, user_id
     );
 
-    log::info!("[SignalR] 正在建立 WebSocket 连接到: {}", ws_url);
+    // 不把 connectionToken / userId 打进日志
+    log::info!("[SignalR] 正在建立 WebSocket 连接到: {}/lcuHub", ws_base);
 
-    let is_local = server_url.contains("127.0.0.1") || server_url.contains("localhost");
+    let is_local = is_local_server_url(server_url);
 
     let tls_connector = if is_local {
         // localhost: LCU 使用自签名证书，需跳过验证
@@ -292,12 +296,27 @@ fn local_tls_config() -> Arc<ClientConfig> {
         .clone()
 }
 
+/// 仅当 URL 的 host 真正是本机回环地址时才返回 true，避免 query/path 中的
+/// "127.0.0.1"/"localhost" 子串误判为本地，从而对远程 Hub 错误跳过证书校验。
+fn is_local_server_url(server_url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(server_url) else {
+        return false;
+    };
+    match parsed.host() {
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 async fn negotiate(server_url: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let is_local = server_url.contains("127.0.0.1") || server_url.contains("localhost");
+    let is_local = is_local_server_url(server_url);
 
     let http_client = get_negotiate_client(is_local);
 
     let negotiate_url = format!("{}/lcuHub/negotiate?negotiateVersion=1", server_url);
+    // Negotiate URL 本身不含 connectionToken；host 异常时仅打前缀避免配置泄露
     log::info!(
         "[SignalR] 正在发送协商 (Negotiate) 请求到: {}",
         negotiate_url
@@ -780,5 +799,33 @@ pub async fn send_event(
         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
             Err("SignalR 连接已关闭".to_string())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_local_server_url;
+
+    #[test]
+    fn local_hosts_are_local() {
+        assert!(is_local_server_url("https://127.0.0.1:12345"));
+        assert!(is_local_server_url("http://localhost:8080"));
+        assert!(is_local_server_url("https://[::1]:9000"));
+    }
+
+    #[test]
+    fn remote_hosts_are_not_local() {
+        assert!(!is_local_server_url("https://example.com"));
+        assert!(!is_local_server_url("https://api.example.com:443"));
+        assert!(!is_local_server_url("https://evil.example/?x=127.0.0.1"));
+        assert!(!is_local_server_url("https://evil.example/localhost"));
+        assert!(!is_local_server_url("https://user:pass@evil.example"));
+    }
+
+    #[test]
+    fn invalid_urls_are_not_local() {
+        assert!(!is_local_server_url(""));
+        assert!(!is_local_server_url("not-a-url"));
+        assert!(!is_local_server_url("127.0.0.1:8080"));
     }
 }

@@ -12,6 +12,7 @@ import {
 } from "../types/gameInfo";
 import { usePremadeGroup } from "../composables/usePremadeGroup";
 import { useGamePlayerData } from "../composables/useGamePlayerData";
+import { useGameInfoStore } from "../store/gameInfoStore";
 import LcuOfflineState from "../components/LcuOfflineState.vue";
 import PlayerInfoCard from "../components/gameinfo/PlayerInfoCard.vue";
 import LcuImage from "../components/LcuImage.vue";
@@ -27,7 +28,6 @@ const premadeColorsMy = ref<Record<number, number>>({});
 const premadeColorsTheir = ref<Record<number, number>>({});
 
 const {
-  playerData,
   sessionAllyTeam,
   sessionEnemyTeam,
   isTftMode,
@@ -43,12 +43,13 @@ const {
   activeTab,
 );
 
+const gameInfoStore = useGameInfoStore();
 const { getPremadeIdx, myPremadeGroups, theirPremadeGroups } = usePremadeGroup(
   myTeam,
   theirTeam,
   sessionAllyTeam,
   sessionEnemyTeam,
-  playerData,
+  (ref) => gameInfoStore.getPlayer(ref),
   premadeColorsMy,
   premadeColorsTheir,
 );

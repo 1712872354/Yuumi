@@ -94,14 +94,17 @@ export function seedInitialPlayerData(
       isIdentityCompatible(e, incoming),
     );
     if (existing) {
-      if (p.championId && p.championId > 0) {
-        existing.championId = p.championId;
-      }
-      gameInfo.setPlayer(existing, {
-        cellId: key,
-        summonerId: p.summonerId,
-        puuid: p.puuid,
-      });
+      // 不要原地改 existing.championId：通过 setPlayer 写新对象，保证响应性
+      const championId =
+        p.championId && p.championId > 0 ? p.championId : existing.championId;
+      gameInfo.setPlayer(
+        { ...existing, championId },
+        {
+          cellId: key,
+          summonerId: p.summonerId,
+          puuid: p.puuid,
+        },
+      );
       continue;
     }
     if (byCell) {

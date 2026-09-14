@@ -159,6 +159,20 @@ fn get_tft_data_cache_path() -> Option<std::path::PathBuf> {
     Some(dir.join("tft_data.json"))
 }
 
+/// 磁盘缓存有效期：7 天（补丁更新后不会无限期使用旧字典）
+const TFT_DISK_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+
+fn is_fresh_disk_cache(path: &std::path::Path) -> bool {
+    match std::fs::metadata(path).and_then(|m| m.modified()) {
+        Ok(mtime) => match mtime.elapsed() {
+            Ok(age) => age < TFT_DISK_CACHE_TTL,
+            // 系统时钟回拨：视为过期，重新拉取
+            Err(_) => false,
+        },
+        Err(_) => false,
+    }
+}
+
 /// 抓取 TFT 基础数据字典（优先 LCU，备用 CDragon，带内存与磁盘缓存）
 /// LCU → CDragon（一次，无重试，无代理）
 pub(crate) async fn fetch_tft_data_mapping(_lcu: Option<&crate::LcuClient>) -> TftDataMapping {
@@ -172,10 +186,12 @@ pub(crate) async fn fetch_tft_data_mapping(_lcu: Option<&crate::LcuClient>) -> T
         }
     }
 
-    // 2. 尝试从本地磁盘缓存加载（无锁）
+    // 2. 尝试从本地磁盘缓存加载（无锁；超过 TTL 则忽略）
     if let Some(cache_path) = get_tft_data_cache_path() {
         if cache_path.exists() {
-            if let Ok(file_content) = std::fs::read_to_string(&cache_path) {
+            if !is_fresh_disk_cache(&cache_path) {
+                log::debug!("TFT 磁盘缓存已过期，忽略并重新拉取");
+            } else if let Ok(file_content) = std::fs::read_to_string(&cache_path) {
                 if let Ok(m) = serde_json::from_str::<TftDataMapping>(&file_content) {
                     if !m.champions.is_empty() {
                         let mut cache = CACHED_TFT_DATA.write().await;

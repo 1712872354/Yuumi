@@ -102,6 +102,8 @@ export interface SaveSavedPlayerInput {
   profileIconId?: number;
   encountered?: boolean;
   championId?: number;
+  /** Riot ID tagLine；空/缺省时后端保留已有值 */
+  tagLine?: string;
 }
 
 /** 分页查询保存的玩家，filter: "tagged" | "multiple" | undefined */

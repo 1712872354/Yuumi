@@ -134,6 +134,8 @@ struct PerfContext {
     damage_share: f64,
     damage_ratio: f64,
     vision: i32,
+    /// 队内伤害数据是否可用（全 0 时为 false，避免误判垫底/占比）
+    damage_stats_valid: bool,
     is_team_top_damage: bool,
     is_team_bottom_damage: bool,
     is_team_bottom_vision: bool,
@@ -150,7 +152,10 @@ fn build_context(players: &[PlayerPerf]) -> Vec<PerfContext> {
         .iter()
         .map(|p| {
             let team = teams.get(&p.team_id).cloned().unwrap_or_default();
-            let team_damage_sum: f64 = team.iter().map(|x| x.damage as f64).sum::<f64>().max(1.0);
+            let team_damage_total: f64 = team.iter().map(|x| x.damage as f64).sum();
+            let team_taken_total: f64 = team.iter().map(|x| x.damage_taken as f64).sum();
+            // 全员伤害/承伤均为 0 时视为数据缺失，不再用 max(1.0) 放大占比或垫底
+            let damage_stats_valid = team_damage_total > 0.0 || team_taken_total > 0.0;
             let team_damages: Vec<f64> = team.iter().map(|x| x.damage as f64).collect();
             let team_visions: Vec<f64> = team.iter().map(|x| x.vision as f64).collect();
             let team_kdas: Vec<f64> = team.iter().map(|x| x.kda()).collect();
@@ -167,11 +172,16 @@ fn build_context(players: &[PlayerPerf]) -> Vec<PerfContext> {
                 deaths: p.deaths,
                 assists: p.assists,
                 kda: p.kda(),
-                damage_share: p.damage as f64 / team_damage_sum,
+                damage_share: if damage_stats_valid {
+                    p.damage as f64 / team_damage_total.max(1.0)
+                } else {
+                    0.0
+                },
                 damage_ratio: p.damage_ratio(),
                 vision: p.vision,
-                is_team_top_damage: p.damage as f64 >= max_damage - 1.0,
-                is_team_bottom_damage: p.damage as f64 <= min_damage + 1.0,
+                damage_stats_valid,
+                is_team_top_damage: damage_stats_valid && p.damage as f64 >= max_damage - 1.0,
+                is_team_bottom_damage: damage_stats_valid && p.damage as f64 <= min_damage + 1.0,
                 is_team_bottom_vision: p.vision as f64 <= min_vision + 0.5,
                 is_team_bottom_kda: p.kda() <= min_kda + 0.05,
             }
@@ -229,10 +239,14 @@ pub fn evaluate_match(players: &[PlayerPerf], sensitivity: Sensitivity) -> Vec<A
             ));
         }
 
-        // ── 演员：极端死亡 + 伤转极低 ──
+        // ── 演员：极端死亡 + 伤转极低（伤害数据缺失时不打） ──
         let inter_deaths = (12.0 / s).round() as i32;
         let inter_ratio = 55.0 * s;
-        if p.deaths >= inter_deaths && p.damage_ratio < inter_ratio && p.kills + p.assists <= 6 {
+        if p.damage_stats_valid
+            && p.deaths >= inter_deaths
+            && p.damage_ratio < inter_ratio
+            && p.kills + p.assists <= 6
+        {
             tags.push((
                 AutoTag::Inter,
                 performance_score(p),
@@ -286,11 +300,15 @@ fn pick_primary_tag(mut tags: Vec<(AutoTag, f64, String)>) -> Option<(AutoTag, f
     tags.into_iter().next()
 }
 
-/// 从 LCU/SGP 原始 JSON 解析本局全部参与者表现
+/// 从 LCU/SGP 原始 JSON 解析本局全部参与者表现。
+/// 斗魂竞技场（1700/1710）队伍归属用 `stats.subteamPlacement`，其余用 `teamId`。
 pub fn parse_participants_from_match_json(game: &Value) -> Vec<PlayerPerf> {
     let Some(list) = game.get("participants").and_then(|v| v.as_array()) else {
         return Vec::new();
     };
+
+    let queue_id = game.get("queueId").and_then(|v| v.as_i64()).unwrap_or(0);
+    let is_arena = crate::parsers::match_parser::is_arena_queue(queue_id);
 
     let remake = list.iter().any(|p| {
         p.get("stats")
@@ -302,16 +320,8 @@ pub fn parse_participants_from_match_json(game: &Value) -> Vec<PlayerPerf> {
     list.iter()
         .filter_map(|p| {
             let stats = p.get("stats")?;
-            let puuid = p
-                .get("puuid")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())?
-                .to_string();
-            let team_id = p
-                .get("teamId")
-                .and_then(|v| v.as_i64())
-                .or_else(|| stats.get("teamId").and_then(|v| v.as_i64()))
-                .unwrap_or(0) as i32;
+            let puuid = crate::lcu::match_detail::extract_puuid(p)?;
+            let team_id = crate::lcu::match_detail::resolve_team_id(p, stats, is_arena)?;
 
             let dmg = stats
                 .get("totalDamageDealtToChampions")
@@ -461,5 +471,80 @@ mod tests {
         assert!(list[0].win);
         assert_eq!(list[0].cs, 120);
         assert!((list[0].damage_ratio() - 200.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn parse_arena_uses_subteam_placement() {
+        let json = serde_json::json!({
+            "queueId": 1700,
+            "participants": [
+                {
+                    "puuid": "a",
+                    "championId": 1,
+                    "teamId": 100,
+                    "stats": {
+                        "subteamPlacement": 1,
+                        "win": true, "kills": 5, "deaths": 1, "assists": 5,
+                        "totalDamageDealtToChampions": 20000,
+                        "totalDamageTaken": 10000
+                    }
+                },
+                {
+                    "puuid": "b",
+                    "championId": 2,
+                    "teamId": 100,
+                    "stats": {
+                        "subteamPlacement": 2,
+                        "win": false, "kills": 1, "deaths": 8, "assists": 2,
+                        "totalDamageDealtToChampions": 8000,
+                        "totalDamageTaken": 20000
+                    }
+                },
+                {
+                    "puuid": "missing-placement",
+                    "championId": 3,
+                    "teamId": 100,
+                    "stats": {
+                        "win": true, "kills": 3, "deaths": 2, "assists": 3,
+                        "totalDamageDealtToChampions": 12000,
+                        "totalDamageTaken": 12000
+                    }
+                }
+            ]
+        });
+        let list = parse_participants_from_match_json(&json);
+        assert_eq!(
+            list.len(),
+            2,
+            "Arena 缺 subteamPlacement 应跳过: {:?}",
+            list
+        );
+        let a = list.iter().find(|p| p.puuid == "a").unwrap();
+        let b = list.iter().find(|p| p.puuid == "b").unwrap();
+        assert_eq!(a.team_id, 1);
+        assert_eq!(b.team_id, 2);
+    }
+
+    #[test]
+    fn zero_damage_team_skips_damage_tags() {
+        let mut players = fill_teams();
+        for p in &mut players {
+            p.damage = 0;
+            p.damage_taken = 0;
+            if !p.win {
+                p.deaths = 14;
+                p.kills = 0;
+                p.assists = 1;
+            }
+        }
+        // 伤害数据全 0 时不应打出坑/演员（依赖输出垫底/伤转）
+        let tags = evaluate_match(&players, Sensitivity::Normal);
+        assert!(
+            tags.iter().all(|t| t.tag != AutoTag::Feeder
+                && t.tag != AutoTag::Inter
+                && t.tag != AutoTag::Carried),
+            "伤害全 0 不应打伤害相关标: {:?}",
+            tags
+        );
     }
 }

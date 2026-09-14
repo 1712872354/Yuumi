@@ -1,5 +1,14 @@
 /** 战绩队列 / 段位展示元数据（Search / Career 等页共用） */
 
+/**
+ * 云顶队列 ID（与 Rust `parsers::match_parser::is_tft_queue` 对齐；两边需同步改）
+ */
+export const TFT_QUEUE_IDS = [1090, 1100, 1130, 1160] as const;
+
+export function isTftQueue(queueId: number): boolean {
+  return (TFT_QUEUE_IDS as readonly number[]).includes(queueId);
+}
+
 /** 战绩页队列筛选项；`id: null` 表示「全部」 */
 export const QUEUE_FILTER_OPTIONS: { id: number | null; label: string }[] = [
   { id: null, label: "全部" },

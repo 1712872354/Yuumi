@@ -313,6 +313,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
     // 选人会话事件每秒推送多次，300ms 节流合并（置于 emit 之前），
     // 前端 emit / Agent / bench / SignalR 全链路均针对最新状态即可，丢弃过密中间帧
     if uri.starts_with("/lol-champ-select/v1/session") && !session_throttle_allowed() {
+        crate::pipeline_stats::incr_champ_select_throttled();
         return;
     }
 
@@ -321,6 +322,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
     if should_emit {
         log::debug!("[WS] 事件: {}", uri);
         let _ = app_handle.emit("lcu-ws-event", event_data.clone());
+        crate::pipeline_stats::incr_ws_events_emitted();
     }
 
     // ── 内部 Agent 转发 ──────────────────────────────────────────────────
@@ -333,6 +335,7 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                     if let Err(e) = state.agents.bp_session_tx.try_send(session) {
                         match e {
                             tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                                crate::pipeline_stats::incr_bp_channel_dropped();
                                 log::warn!(
                                     "[WS] BP Session 消息发送频繁，通道已满，丢弃过密中间帧"
                                 );
@@ -426,6 +429,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
             if let Err(e) = state.agents.gameflow_tx.try_send(
                 crate::agents::auto_match::GameflowEvent::PhaseChanged(phase.to_string()),
             ) {
+                if matches!(e, tokio::sync::mpsc::error::TrySendError::Full(_)) {
+                    crate::pipeline_stats::incr_match_channel_dropped();
+                }
                 log::warn!("[WS] 推送 Gameflow PhaseChanged 失败: {}", e);
             }
             // 只有当真正从非 ChampSelect 阶段跨阶段进入 ChampSelect 时，才清空上局历史英雄缓存
@@ -449,6 +455,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 if let Err(e) = state.agents.gameflow_tx.try_send(
                     crate::agents::auto_match::GameflowEvent::ReadyCheck(ready_check),
                 ) {
+                    if matches!(e, tokio::sync::mpsc::error::TrySendError::Full(_)) {
+                        crate::pipeline_stats::incr_match_channel_dropped();
+                    }
                     log::warn!("[WS] 推送 Gameflow ReadyCheck 失败: {}", e);
                 }
             }
@@ -461,6 +470,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 if let Err(e) = state.agents.gameflow_tx.try_send(
                     crate::agents::auto_match::GameflowEvent::HonorBallot(ballot),
                 ) {
+                    if matches!(e, tokio::sync::mpsc::error::TrySendError::Full(_)) {
+                        crate::pipeline_stats::incr_match_channel_dropped();
+                    }
                     log::warn!("[WS] 推送 Gameflow HonorBallot 失败: {}", e);
                 }
             }
@@ -475,6 +487,9 @@ fn process_event(text: &str, app_handle: &AppHandle) {
                 if let Err(e) = state.agents.gameflow_tx.try_send(
                     crate::agents::auto_match::GameflowEvent::ReceivedInvitations(invitations),
                 ) {
+                    if matches!(e, tokio::sync::mpsc::error::TrySendError::Full(_)) {
+                        crate::pipeline_stats::incr_match_channel_dropped();
+                    }
                     log::warn!("[WS] 推送 Gameflow ReceivedInvitations 失败: {}", e);
                 }
             }

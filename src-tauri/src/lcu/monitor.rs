@@ -95,12 +95,18 @@ pub fn start(
                                 .contains("leagueclientux")
                         })
                         .map(|(pid, p)| {
+                            let cmd = p
+                                .cmd()
+                                .iter()
+                                .map(|s| s.to_string_lossy())
+                                .collect::<Vec<_>>()
+                                .join(" ");
                             format!(
                                 "PID={:?}, Name={:?}, EXE={:?}, CMD={:?}",
                                 pid,
                                 p.name(),
                                 p.exe(),
-                                p.cmd()
+                                sanitize_cmdline(&cmd)
                             )
                         })
                         .collect();
@@ -631,5 +637,25 @@ fn get_cmdline_windows(pid: u32) -> Option<String> {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_cmdline;
+
+    #[test]
+    fn sanitize_cmdline_masks_token() {
+        let cmd =
+            r"C:\LeagueClientUx.exe --app-port=12345 --remoting-auth-token=supersecret --other=1";
+        let sanitized = sanitize_cmdline(cmd);
+        assert!(sanitized.contains("--remoting-auth-token=***"));
+        assert!(!sanitized.contains("supersecret"));
+    }
+
+    #[test]
+    fn sanitize_cmdline_keeps_plain_cmd() {
+        let cmd = "LeagueClientUx.exe --app-port=12345";
+        assert_eq!(sanitize_cmdline(cmd), cmd);
     }
 }

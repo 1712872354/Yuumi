@@ -10,6 +10,7 @@ import AutoHoverCard from "../components/tools/AutoHoverCard.vue";
 import AutoGameflowCard from "../components/tools/AutoGameflowCard.vue";
 import SpectateCard from "../components/tools/SpectateCard.vue";
 import LcuQuickActionsCard from "../components/tools/LcuQuickActionsCard.vue";
+import PipelineStatsCard from "../components/tools/PipelineStatsCard.vue";
 
 const config = inject<Ref<AppConfig | null>>("appConfig");
 const store = useLcuStore();
@@ -44,6 +45,10 @@ provide("updateConfig", updateConfig);
       <AutoGameflowCard />
       <SpectateCard />
       <LcuQuickActionsCard />
+
+      <!-- 3. 诊断 -->
+      <div class="group-header">{{ $t("tools_extra.pipelineStats.group") }}</div>
+      <PipelineStatsCard />
     </div>
   </div>
 </template>

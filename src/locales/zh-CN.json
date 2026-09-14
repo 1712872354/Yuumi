@@ -634,7 +634,22 @@
     "reloading": "正在重载...",
     "noSkins": "该英雄暂无皮肤数据",
     "skinsLoadErr": "加载皮肤失败",
-    "selectHeroFirst": "请先选择英雄以加载皮肤列表"
+    "selectHeroFirst": "请先选择英雄以加载皮肤列表",
+    "pipelineStats": {
+      "group": "诊断",
+      "title": "管道统计",
+      "desc": "WS 事件、详情缓存与上传队列计数（5 秒刷新）",
+      "refresh": "刷新",
+      "failed": "获取管道统计失败",
+      "wsEventsEmitted": "WS 已转发",
+      "champSelectThrottled": "选人节流丢弃",
+      "bpChannelDropped": "BP 通道丢弃",
+      "matchChannelDropped": "对局通道丢弃",
+      "matchDetailCache": "详情缓存 命中/回源",
+      "uploadEnqueued": "上传入队",
+      "uploadSuccess": "上传成功",
+      "uploadFailed": "上传失败"
+    }
   },
   "gameInfo": {
     "myTeam": "友方 ({count})",

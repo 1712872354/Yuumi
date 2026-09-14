@@ -46,6 +46,24 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
     resolveCarryChampionId,
   } = deps;
 
+  /** 同人 in-flight 去重：多入口并发时复用同一次加载 */
+  const inflight = new Map<string, Promise<void>>();
+
+  function resolveInflightKey(
+    puuid: string | undefined,
+    sid: number,
+    cellId: number,
+    entry: PlayerData | undefined,
+  ): string {
+    const ep = (entry?.info?.puuid || "").trim();
+    if (puuid) return `puuid:${puuid}`;
+    if (ep) return `puuid:${ep}`;
+    if (sid) return `sid:${sid}`;
+    const esid = entry?.info?.summonerId || 0;
+    if (esid && esid !== cellId) return `sid:${esid}`;
+    return `cell:${cellId}`;
+  }
+
   return async function loadPlayerData(
     cellId: number,
     summonerId: number,
@@ -60,11 +78,18 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
     const incoming = { puuid: playerPuuid, summonerId: realSummonerId, cellId };
     const candidates = [
       playerPuuid ? gameInfo.getPlayer({ puuid: playerPuuid }) : undefined,
-      summonerId ? gameInfo.getPlayer({ summonerId }) : undefined,
+      realSummonerId ? gameInfo.getPlayer({ summonerId: realSummonerId }) : undefined,
       gameInfo.getPlayer({ cellId }),
     ];
     const reusable = candidates.find((e) => {
       if (!e?.info || e.loading) return false;
+      // 空战绩且未标记「已隐藏」时不要复用（占位/对局中拉取失败的快照）
+      // 新号（1~29 级）允许空战绩复用
+      if (!e.matchHistoryHidden && (!e.matches || e.matches.length === 0)) {
+        const lvl = e.info.summonerLevel ?? 0;
+        const isNewAccount = lvl > 0 && lvl < NEW_PLAYER_MAX_LEVEL;
+        if (!isNewAccount) return false;
+      }
       const ePuuid = (e.info.puuid || "").trim();
       const eSid = e.info.summonerId || 0;
       if (incoming.puuid && !ePuuid) return false;
@@ -151,6 +176,35 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
       return;
     }
 
+    // loading 中且已有 in-flight：等待完成后绑定，避免重复拉取
+    const pendingEntry = candidates.find((e) => e?.loading);
+    const inflightKey = resolveInflightKey(
+      playerPuuid,
+      realSummonerId,
+      cellId,
+      pendingEntry,
+    );
+    const pending = inflight.get(inflightKey);
+    if (pending) {
+      await pending;
+      const after = [
+        playerPuuid ? gameInfo.getPlayer({ puuid: playerPuuid }) : undefined,
+        realSummonerId
+          ? gameInfo.getPlayer({ summonerId: realSummonerId })
+          : undefined,
+        gameInfo.getPlayer({ cellId }),
+      ].find((e) => e?.info && !e.loading);
+      if (after?.info) {
+        gameInfo.setPlayer(after, {
+          cellId,
+          summonerId: realSummonerId,
+          puuid: playerPuuid || after.info.puuid || undefined,
+        });
+        return;
+      }
+      // 首载失败或未写入可用身份：继续走下面的完整加载，不要静默返回
+    }
+
     gameInfo.setPlayer(
       {
         info: null,
@@ -162,18 +216,19 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
       { cellId, summonerId: realSummonerId, puuid: playerPuuid },
     );
 
-    try {
-      let info: SummonerDisplay | null = null;
-      if (playerPuuid) {
-        const resp = await lcuRequest<SummonerDisplay>(
-          "GET",
-          `/lol-summoner/v2/summoners/puuid/${playerPuuid}`,
-        );
-        if (resp.success && resp.data) {
-          info = resp.data;
+    const loadTask = (async () => {
+      try {
+        let info: SummonerDisplay | null = null;
+        if (playerPuuid) {
+          const resp = await lcuRequest<SummonerDisplay>(
+            "GET",
+            `/lol-summoner/v2/summoners/puuid/${playerPuuid}`,
+          );
+          if (resp.success && resp.data) {
+            info = resp.data;
+          }
         }
-      }
-      if (!info && realSummonerId) {
+        if (!info && realSummonerId) {
         const resp = await lcuRequest<SummonerDisplay>(
           "GET",
           `/lol-summoner/v1/summoners/${realSummonerId}`,
@@ -256,56 +311,59 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
       }
 
       const safeInfo = info;
-      if (
-        !safeInfo.profileIconUrl &&
-        (safeInfo.profileIconId !== undefined || safeInfo.profileIconId !== null)
-      ) {
-        safeInfo.profileIconUrl = `/lol-game-data/assets/v1/profile-icons/${safeInfo.profileIconId ?? 29}.jpg`;
+      if (!safeInfo.profileIconUrl && safeInfo.profileIconId != null) {
+        safeInfo.profileIconUrl = `/lol-game-data/assets/v1/profile-icons/${safeInfo.profileIconId}.jpg`;
       }
 
       const filterEnabled = appConfig.value?.Functions?.GameInfoFilter ?? false;
       const maxMatches = filterEnabled ? 50 : 10;
 
+      const isCurrentPlayer =
+        realSummonerId === currentSummonerId.value ||
+        (!!safeInfo.puuid &&
+          !!currentSummonerPuuid.value &&
+          safeInfo.puuid === currentSummonerPuuid.value);
+
+      // 对局中 LCU 对本人 match-history 常失败；本人强制走 SGP 合并源
+      const inGamePhase =
+        store.gamePhase === "InProgress" || store.gamePhase === "GameStart";
+      const forceSgp = isCurrentPlayer && inGamePhase;
+
       const [rawMatches, rankedResp, masteryData] = await Promise.all([
         safeInfo.puuid
-          ? fetchMatchHistorySmart(safeInfo.puuid, 0, maxMatches)
-              .then((res) => {
-                if (!res || res.length === 0) {
-                  const lvl = safeInfo.summonerLevel ?? 0;
-                  if (!(lvl > 0 && lvl < NEW_PLAYER_MAX_LEVEL)) {
-                    matchHistoryHidden = true;
-                  }
-                }
-                return res || [];
-              })
-              .catch((e) => {
-                matchHistoryHidden = true;
-                console.debug(
-                  `[GameInfo] 战绩拉取失败/已隐藏 (puuid: ${safeInfo.puuid}):`,
-                  e,
-                );
-                return [] as MatchDisplay[];
-              })
+          ? fetchMatchHistorySmart(safeInfo.puuid, 0, maxMatches, {
+              forceSgp,
+            }).catch((e) => {
+              console.debug(
+                `[GameInfo] 战绩拉取失败 (puuid: ${safeInfo.puuid}):`,
+                e,
+              );
+              return [] as MatchDisplay[];
+            })
           : Promise.resolve([] as MatchDisplay[]),
         safeInfo.puuid
           ? fetchRankedStatsCached(safeInfo.puuid)
           : Promise.resolve({ success: false as const }),
         fetchPlayerMastery(
           safeInfo.puuid,
-          summonerId,
-          summonerId === currentSummonerId.value ||
-            (!!safeInfo.puuid &&
-              safeInfo.puuid === currentSummonerPuuid.value),
+          realSummonerId,
+          isCurrentPlayer,
         ),
       ]);
 
-      const isCurrentPlayer =
-        summonerId === currentSummonerId.value ||
-        (!!safeInfo.puuid && safeInfo.puuid === currentSummonerPuuid.value);
-
       let matches: MatchDisplay[] = rawMatches;
+      // 本人：始终合并本地缓存（含生涯页），对局中 LCU 空结果时仍有战绩可展示
       if (safeInfo.puuid && isCurrentPlayer) {
         matches = mergeMatchesWithCache(safeInfo.puuid, rawMatches);
+      }
+
+      // 空结果且合并缓存后仍为空 → 才视为隐藏/新号；对局中本人不因 LCU 失败误标隐藏
+      if (matches.length === 0) {
+        const lvl = safeInfo.summonerLevel ?? 0;
+        const isNewAccount = lvl > 0 && lvl < NEW_PLAYER_MAX_LEVEL;
+        if (!isNewAccount && !(isCurrentPlayer && inGamePhase)) {
+          matchHistoryHidden = true;
+        }
       }
 
       if (filterEnabled && currentQueueId.value !== null) {
@@ -376,11 +434,12 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         puuid: safeInfo.puuid || undefined,
       });
       onPlayerSaved();
-    } catch {
+    } catch (e) {
       const existing =
         gameInfo.getPlayer({ cellId })?.info ||
         gameInfo.getPlayer({ summonerId })?.info ||
         gameInfo.getPlayer({ puuid: playerPuuid })?.info;
+      console.debug(`[GameInfo] loadPlayerData 失败 (cell ${cellId}):`, e);
       gameInfo.setPlayer(
         {
           info: existing || null,
@@ -392,6 +451,14 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         },
         { cellId, summonerId, puuid: playerPuuid },
       );
+    }
+    })();
+
+    inflight.set(inflightKey, loadTask);
+    try {
+      await loadTask;
+    } finally {
+      inflight.delete(inflightKey);
     }
   };
 }

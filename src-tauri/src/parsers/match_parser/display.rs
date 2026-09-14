@@ -159,7 +159,7 @@ impl LcuMatchGame {
 mod tests {
     use super::*;
     use crate::lcu::game_data::{CherryAugmentDetail, GameDataAssets};
-    use crate::parsers::match_parser::{is_arena_queue, queue_id_to_opgg_mode};
+    use crate::parsers::match_parser::{is_arena_queue, is_tft_queue, queue_id_to_opgg_mode};
     use serde_json::json;
 
     #[test]
@@ -196,13 +196,14 @@ mod tests {
 
     #[test]
     fn queue_id_to_opgg_mode_maps_known_queues() {
-        assert_eq!(queue_id_to_opgg_mode(450), "aram");
-        assert_eq!(queue_id_to_opgg_mode(2400), "aram");
-        assert_eq!(queue_id_to_opgg_mode(1700), "arena");
-        assert_eq!(queue_id_to_opgg_mode(1300), "nexus_blitz");
-        assert_eq!(queue_id_to_opgg_mode(900), "urf");
-        assert_eq!(queue_id_to_opgg_mode(420), "ranked");
-        assert_eq!(queue_id_to_opgg_mode(-1), "ranked");
+        assert_eq!(queue_id_to_opgg_mode(450), Some("aram"));
+        assert_eq!(queue_id_to_opgg_mode(2400), Some("aram"));
+        assert_eq!(queue_id_to_opgg_mode(1700), Some("arena"));
+        assert_eq!(queue_id_to_opgg_mode(1300), Some("nexus_blitz"));
+        assert_eq!(queue_id_to_opgg_mode(900), Some("urf"));
+        assert_eq!(queue_id_to_opgg_mode(420), Some("ranked"));
+        assert_eq!(queue_id_to_opgg_mode(-1), None);
+        assert_eq!(queue_id_to_opgg_mode(123456), None);
     }
 
     #[test]
@@ -211,6 +212,16 @@ mod tests {
         assert!(is_arena_queue(1710));
         assert!(!is_arena_queue(420));
         assert!(!is_arena_queue(0));
+    }
+
+    #[test]
+    fn is_tft_queue_covers_known_modes() {
+        assert!(is_tft_queue(1090));
+        assert!(is_tft_queue(1100));
+        assert!(is_tft_queue(1130));
+        assert!(is_tft_queue(1160));
+        assert!(!is_tft_queue(420));
+        assert!(!is_tft_queue(0));
     }
 
     fn sample_game(queue_id: i32) -> LcuMatchGame {

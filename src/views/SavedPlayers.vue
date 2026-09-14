@@ -190,6 +190,7 @@ async function saveTag(player: SavedPlayer) {
       tag: editingTag.value.trim() || null,
       summonerName: player.summonerName,
       profileIconId: player.profileIconId,
+      tagLine: player.tagLine || undefined,
     });
     player.tag = editingTag.value.trim() || null;
     editingPuuid.value = null;

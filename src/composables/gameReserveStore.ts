@@ -66,8 +66,41 @@ export interface ReserveSnapshot {
   gameId: number | null;
 }
 
+/**
+ * 保留盘落盘瘦身：限制 matches 体积与加载中占位，避免 10 人局撑爆 localStorage。
+ * 保留少量最近对局，恢复后仍能展示战绩摘要。
+ */
+export function slimPlayerDataForReserve(
+  map: Record<string | number, PlayerData>,
+): Record<string, PlayerData> {
+  const MAX_RESERVE_MATCHES = 5;
+  const MAX_RESERVE_MASTERIES = 20;
+  const out: Record<string, PlayerData> = {};
+  for (const [key, data] of Object.entries(map)) {
+    if (!data?.info || data.loading) continue;
+    out[key] = {
+      info: data.info,
+      matches: (data.matches || []).slice(0, MAX_RESERVE_MATCHES),
+      ranked: data.ranked,
+      loading: false,
+      matchHistoryHidden: data.matchHistoryHidden,
+      championId: data.championId,
+      avgKda: data.avgKda,
+      winRate: data.winRate,
+      winCount: data.winCount,
+      lossesCount: data.lossesCount,
+      fateFlag: data.fateFlag,
+      recentlyChampionName: data.recentlyChampionName,
+      masteries: data.masteries?.slice(0, MAX_RESERVE_MASTERIES),
+      streak: data.streak,
+    };
+  }
+  return out;
+}
+
 export function writeReserveSnapshotToStorage(snapshot: ReserveSnapshot) {
-  lazySetItem(RESERVE_KEYS.playerData, snapshot.playerData);
+  const slimPlayers = slimPlayerDataForReserve(snapshot.playerData);
+  lazySetItem(RESERVE_KEYS.playerData, slimPlayers);
   lazySetItem(RESERVE_KEYS.myTeam, snapshot.myTeam);
   lazySetItem(RESERVE_KEYS.theirTeam, snapshot.theirTeam);
   lazySetItem(RESERVE_KEYS.premadeMy, snapshot.premadeColorsMy);

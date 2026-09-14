@@ -62,7 +62,6 @@ export function useGamePlayerData(
     error,
     currentSummonerId,
     currentSummonerPuuid,
-    playerData,
     champSelectTeamSnapshot,
     champSelectTheirTeamSnapshot,
     sessionAllyTeam,
@@ -234,7 +233,7 @@ export function useGamePlayerData(
     if (isTftMode.value) return false;
     if (isGameActive.value) return true;
     if (appConfig.value?.Functions?.EnableReserveGameinfo) {
-      return Object.keys(playerData.value).length > 0;
+      return gameInfo.uniquePlayerList().length > 0;
     }
     return false;
   });
@@ -348,7 +347,7 @@ export function useGamePlayerData(
   ): number =>
     fallbackPlayer?.championId ||
     fallbackPlayer?.botChampionId ||
-    inheritPlaceholderChampion(playerData.value[cellId], cellId) ||
+    inheritPlaceholderChampion(gameInfo.getPlayer({ cellId }), cellId) ||
     0;
 
   const loadPlayerData = createLoadPlayerData({
@@ -450,7 +449,7 @@ export function useGamePlayerData(
       // 离开游戏活跃状态（回到 Lobby / EndOfGame 等）：
       const hasPlayerData =
         gameflowMyTeam.value.length > 0 &&
-        Object.keys(playerData.value).length > 0;
+        gameInfo.uniquePlayerList().length > 0;
       if (hasPlayerData) {
         // 内存中已有刚打完的对局，确保落盘
         writeReserveData();
@@ -511,6 +510,8 @@ export function useGamePlayerData(
           gameflowTheirTeam.value.length === 0 ||
           (currentTotal > 0 && sessionTotal > currentTotal)
         ) {
+          // 不要 ++requestSeq：那会取消进行中的 loadFromGameflowSession，
+          // 导致整场对局详情半途中断（loading 卡住 / 玩家数据不全）
           processTeamData(teamOne || [], teamTwo || []);
         }
       }
@@ -649,7 +650,6 @@ export function useGamePlayerData(
     error,
     currentSummonerId,
     currentSummonerPuuid,
-    playerData,
     sessionAllyTeam,
     sessionEnemyTeam,
     gameflowMyTeam,

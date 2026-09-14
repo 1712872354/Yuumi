@@ -7,7 +7,7 @@ import type { SummonerDisplay, MatchDisplay, RecentTeammate } from "../../api/lc
 import type { RankDisplaySource, RankedQueueEntry } from "../../types/lcu";
 import LcuImage from "../LcuImage.vue";
 import { NPopover, NSpin } from "naive-ui";
-import { QUEUE_FILTER_OPTIONS, formatRankDisplay } from "../../utils/queueMeta";
+import { QUEUE_FILTER_OPTIONS, formatRankDisplay, isTftQueue } from "../../utils/queueMeta";
 import { getQueueName as resolveQueueName } from "../../utils/queueName";
 import { computeStatsSummary } from "../../composables/gamePlayerStats";
 
@@ -105,17 +105,15 @@ function getQueueName(m: MatchDisplay): string {
   return resolveQueueName(m.queueId, m.name, { t, te });
 }
 
-const TFT_QUEUES = [1090, 1100, 1130, 1160];
-
 function getResultText(m: MatchDisplay): string {
-  if (m.placement && TFT_QUEUES.includes(m.queueId)) {
+  if (m.placement && isTftQueue(m.queueId)) {
     return `第 ${m.placement} 名`;
   }
   return m.win ? t("career.victory") : t("career.defeat");
 }
 
 function getResultClass(m: MatchDisplay): string {
-  if (m.placement && TFT_QUEUES.includes(m.queueId)) {
+  if (m.placement && isTftQueue(m.queueId)) {
     if (m.placement === 1) return "win-text gold-text";
     if (m.placement <= 4) return "win-text";
     return "lose-text";

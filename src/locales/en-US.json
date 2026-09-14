@@ -634,7 +634,22 @@
     "reloading": "Reloading...",
     "noSkins": "No skin data found for this champion",
     "skinsLoadErr": "Failed to load skins",
-    "selectHeroFirst": "Please select a champion first to load skins"
+    "selectHeroFirst": "Please select a champion first to load skins",
+    "pipelineStats": {
+      "group": "Diagnostics",
+      "title": "Pipeline stats",
+      "desc": "WS events, detail cache and upload queue counters (refresh every 5s)",
+      "refresh": "Refresh",
+      "failed": "Failed to load pipeline stats",
+      "wsEventsEmitted": "WS forwarded",
+      "champSelectThrottled": "Champ select throttled",
+      "bpChannelDropped": "BP channel dropped",
+      "matchChannelDropped": "Match channel dropped",
+      "matchDetailCache": "Detail cache hit/miss",
+      "uploadEnqueued": "Upload enqueued",
+      "uploadSuccess": "Upload success",
+      "uploadFailed": "Upload failed"
+    }
   },
   "gameInfo": {
     "myTeam": "Ally ({count})",

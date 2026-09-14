@@ -30,15 +30,9 @@ pub async fn get_player_fate_info(
         )
     };
 
-    let url = format!("{}/lol-match-history/v1/games/{}", base, game_id);
-    let resp = http_client
-        .get(&url)
-        .header("Authorization", &auth)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-
-    let detail: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let detail =
+        crate::lcu::match_detail::fetch_match_detail_json(&http_client, &base, &auth, game_id)
+            .await?;
 
     let queue_id = detail.get("queueId").and_then(|v| v.as_i64()).unwrap_or(0);
     let participants = detail
@@ -119,13 +113,13 @@ pub async fn get_player_fate_info(
                     None => continue,
                 };
 
-                let team_val = if is_arena_queue(queue_id) {
-                    p.get("stats")
-                        .and_then(|s| s.get("subteamPlacement"))
-                        .and_then(|v| v.as_i64())
-                } else {
-                    p.get("teamId").and_then(|v| v.as_i64())
-                };
+                let stats_obj = p.get("stats").cloned().unwrap_or(serde_json::Value::Null);
+                let team_val = crate::lcu::match_detail::resolve_team_id(
+                    p,
+                    &stats_obj,
+                    is_arena_queue(queue_id),
+                )
+                .map(|v| v as i64);
 
                 if pid == curr_pid {
                     current_team = team_val;

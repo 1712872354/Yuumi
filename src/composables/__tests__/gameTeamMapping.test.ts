@@ -26,7 +26,7 @@ const emptyCtx = {
   champSelectTheirTeamSnapshot: [],
   gameflowMyTeam: [],
   gameflowTheirTeam: [],
-  playerData: {} as Record<string | number, PlayerData>,
+  lookupPlayer: (): PlayerData | undefined => undefined,
 };
 
 describe("mapGameflowParticipant", () => {

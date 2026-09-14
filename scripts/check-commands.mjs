@@ -189,9 +189,34 @@ function extractRustEmits(rustFiles) {
   return emits;
 }
 
-/** 从前端提取 listen("event") / listen<...>("event")（支持跨行） */
+/** 从 src/types/events.ts 解析 `export const X = { Key: "event-name" }` 常量表 */
+function extractEventNameConstants() {
+  const file = join(FRONTEND_SRC, "types", "events.ts");
+  const map = new Map(); // "XxxEvents.Key" -> "event-name"
+  let text;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return map;
+  }
+  const objRe = /export const ([A-Za-z0-9_]+)\s*=\s*\{([\s\S]*?)\}\s*as const/g;
+  let m;
+  while ((m = objRe.exec(text))) {
+    const group = m[1];
+    const body = m[2];
+    const kvRe = /([A-Za-z0-9_]+)\s*:\s*["'`]([^"'`]+)["'`]/g;
+    let kv;
+    while ((kv = kvRe.exec(body))) {
+      map.set(`${group}.${kv[1]}`, kv[2]);
+    }
+  }
+  return map;
+}
+
+/** 从前端提取 listen("event") / listen(Events.Key)（支持跨行） */
 function extractFrontendListens(frontFiles) {
   const listens = new Map(); // event -> Set("file:line")
+  const constMap = extractEventNameConstants();
   const callRe = /\blisten\s*(?:<[^>]*>)?\s*\(/g;
   for (const file of frontFiles) {
     const text = readFileSync(file, "utf8");
@@ -199,7 +224,7 @@ function extractFrontendListens(frontFiles) {
     for (let i = 0; i < lines.length; i++) {
       callRe.lastIndex = 0;
       if (!callRe.test(lines[i])) continue;
-      // 从本行 listen( 之后向下最多扫 4 行，取第一个字符串
+      // 从本行 listen( 之后向下最多扫 4 行，优先字面量，其次 Events 常量
       for (let j = i; j < Math.min(i + 5, lines.length); j++) {
         const slice = j === i ? lines[i].slice(callRe.lastIndex) : lines[j];
         const strM = slice.match(/["'`]([A-Za-z0-9_:/-]+)["'`]/);
@@ -207,6 +232,17 @@ function extractFrontendListens(frontFiles) {
           const name = strM[1];
           if (!listens.has(name)) listens.set(name, new Set());
           listens.get(name).add(`${relative(ROOT, file).replace(/\\/g, "/")}:${j + 1}`);
+          break;
+        }
+        const constM = slice.match(/\b([A-Za-z0-9_]+Events)\.([A-Za-z0-9_]+)\b/);
+        if (constM) {
+          const name = constMap.get(`${constM[1]}.${constM[2]}`);
+          if (name) {
+            if (!listens.has(name)) listens.set(name, new Set());
+            listens
+              .get(name)
+              .add(`${relative(ROOT, file).replace(/\\/g, "/")}:${j + 1}`);
+          }
           break;
         }
       }

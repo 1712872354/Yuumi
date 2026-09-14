@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useSettingsAutoSave } from "../../composables/useSettingsAutoSave";
 import { useI18n } from "vue-i18n";
+import { SignalrEvents } from "../../types/events";
 
 const { config, autoSave } = useSettingsAutoSave();
 const { t } = useI18n();
@@ -27,18 +28,18 @@ onMounted(async () => {
 
   // 监听后端 SignalR 事件
   try {
-    const unConnecting = await listen("signalr-connecting", () => {
+    const unConnecting = await listen(SignalrEvents.Connecting, () => {
       signalrStatus.value = "connecting";
       signalrError.value = "";
     });
-    const unConnected = await listen("signalr-connected", () => {
+    const unConnected = await listen(SignalrEvents.Connected, () => {
       signalrStatus.value = "connected";
       signalrError.value = "";
     });
-    const unDisconnected = await listen("signalr-disconnected", () => {
+    const unDisconnected = await listen(SignalrEvents.Disconnected, () => {
       signalrStatus.value = "disconnected";
     });
-    const unError = await listen<string>("signalr-error", (event) => {
+    const unError = await listen<string>(SignalrEvents.Error, (event) => {
       signalrStatus.value = "error";
       signalrError.value = event.payload;
     });

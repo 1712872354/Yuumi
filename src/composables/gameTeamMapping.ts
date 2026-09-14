@@ -7,7 +7,12 @@ export interface MapParticipantContext {
   champSelectTheirTeamSnapshot: PremadePlayerLike[];
   gameflowMyTeam: PremadePlayerLike[];
   gameflowTheirTeam: PremadePlayerLike[];
-  playerData: Record<string | number, PlayerData>;
+  /** 按身份键取已加载玩家（优先 getPlayer，避免整表 playerData 重建） */
+  lookupPlayer: (ref: {
+    puuid?: string;
+    summonerId?: number;
+    cellId?: number;
+  }) => PlayerData | undefined;
 }
 
 /**
@@ -73,10 +78,11 @@ export function mapGameflowParticipant(
     }
   }
   if (!resolvedChampId || resolvedChampId <= 0) {
-    const pd =
-      (p.puuid ? ctx.playerData[p.puuid] : undefined) ||
-      (p.summonerId ? ctx.playerData[p.summonerId] : undefined) ||
-      ctx.playerData[stableCellId];
+    const pd = ctx.lookupPlayer({
+      puuid: p.puuid,
+      summonerId: p.summonerId,
+      cellId: stableCellId,
+    });
     if (pd?.championId && pd.championId > 0) {
       resolvedChampId = pd.championId;
     }

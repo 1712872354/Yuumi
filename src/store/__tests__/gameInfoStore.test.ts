@@ -82,6 +82,16 @@ describe("gameInfoStore", () => {
     expect(s.getPlayer({ cellId: 5 })).toEqual(b);
   });
 
+  it("restorePlayers keeps pending: cell binding", () => {
+    const s = useGameInfoStore();
+    const placeholder = emptyPlayer("");
+    s.restorePlayers({
+      "pending:3": placeholder,
+    });
+    expect(s.getPlayer({ cellId: 3 })).toEqual(placeholder);
+    expect(s.playerData[3]).toEqual(placeholder);
+  });
+
   it("resetTeams clears team arrays but keeps summoner identity", () => {
     const s = useGameInfoStore();
     s.currentSummonerPuuid = "p1";

@@ -75,8 +75,9 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
     requestSeq,
   } = deps;
 
-  function playerDataLookup() {
-    return gameInfo.playerData;
+  function playerLookup() {
+    return (ref: { puuid?: string; summonerId?: number; cellId?: number }) =>
+      gameInfo.getPlayer(ref);
   }
 
   async function tryLiveTeamsFallback() {
@@ -128,7 +129,11 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
   async function processTeamData(
     teamOne: GameflowParticipant[],
     teamTwo: GameflowParticipant[],
+    reqId?: number,
   ) {
+    const isStale = () => reqId !== undefined && reqId !== requestSeq.value;
+    if (isStale()) return;
+
     if (!currentSummonerId.value && !currentSummonerPuuid.value) {
       try {
         const s = await fetchCurrentSummoner();
@@ -138,6 +143,7 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
         /* ignore */
       }
     }
+    if (isStale()) return;
 
     const checkMatches = (p: GameflowParticipant) => {
       const matchLocal =
@@ -194,7 +200,7 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
       champSelectTheirTeamSnapshot: champSelectTheirTeamSnapshot.value,
       gameflowMyTeam: gameflowMyTeam.value,
       gameflowTheirTeam: gameflowTheirTeam.value,
-      playerData: playerDataLookup(),
+      lookupPlayer: playerLookup(),
     };
     const mapParticipant = (
       p: GameflowParticipant,
@@ -208,6 +214,8 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
     const mappedTheir = enemyTeam.map((p, idx) =>
       mapParticipant(p, idx, 5, true),
     );
+    if (isStale()) return;
+
     gameflowMyTeam.value = mergeTeamPreservingIdentity(
       mappedMy,
       gameflowMyTeam.value,
@@ -239,11 +247,11 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
 
     loadTeam(background)
       .then(() => {
-        writeReserveData();
+        if (!isStale()) writeReserveData();
       })
       .catch((err) => {
         console.debug("[GameInfo] 队伍数据预加载失败:", err);
-        writeReserveData();
+        if (!isStale()) writeReserveData();
       });
 
     void tryLiveTeamsFallback();
@@ -254,9 +262,18 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
     error.value = "";
 
     const reqId = ++requestSeq.value;
+    /** 过期返回前必须复位 loading，避免 UI 卡在加载态 */
+    const abortIfStale = () => {
+      if (reqId !== requestSeq.value) {
+        loading.value = false;
+        return true;
+      }
+      return false;
+    };
 
     invalidateGameflowSessionCache();
     await updateCurrentQueueId();
+    if (abortIfStale()) return;
     if (isTftMode.value) {
       gameflowMyTeam.value = [];
       gameflowTheirTeam.value = [];
@@ -277,10 +294,11 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
         /* ignore */
       }
     }
+    if (abortIfStale()) return;
 
     try {
       const data = await fetchSessionCached();
-      if (reqId !== requestSeq.value) return;
+      if (abortIfStale()) return;
 
       if (!data?.gameData) {
         error.value = "无法获取对局 Session";
@@ -329,7 +347,7 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
         const maxRetries = 10;
         while (retried < maxRetries) {
           await new Promise((r) => setTimeout(r, 1000));
-          if (reqId !== requestSeq.value) return;
+          if (abortIfStale()) return;
           if (
             store.gamePhase !== "InProgress" &&
             store.gamePhase !== "GameStart"
@@ -339,14 +357,14 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           }
           invalidateGameflowSessionCache();
           const retryData = await fetchSessionCached();
-          if (reqId !== requestSeq.value) return;
+          if (abortIfStale()) return;
           const rt = retryData?.gameData;
           if (
             rt &&
             ((rt.teamOne && rt.teamOne.length > 0) ||
               (rt.teamTwo && rt.teamTwo.length > 0))
           ) {
-            return processTeamData(rt.teamOne || [], rt.teamTwo || []);
+            return processTeamData(rt.teamOne || [], rt.teamTwo || [], reqId);
           }
           retried++;
         }
@@ -359,8 +377,8 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           champSelectTheirTeamSnapshot.value.some((p) => p.bot || p.isBot) ||
           champSelectTeamSnapshot.value.some((p) => p.bot || p.isBot);
         if (isCustomGame || snapshotHasBots) {
-          if (reqId !== requestSeq.value) return;
-          await processTeamData(t1, t2);
+          if (abortIfStale()) return;
+          await processTeamData(t1, t2, reqId);
           loading.value = false;
           return;
         }
@@ -372,7 +390,7 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           (currentT1.length === 0 || currentT2.length === 0)
         ) {
           await new Promise((r) => setTimeout(r, 1000));
-          if (reqId !== requestSeq.value) return;
+          if (abortIfStale()) return;
           if (
             store.gamePhase !== "InProgress" &&
             store.gamePhase !== "GameStart"
@@ -382,7 +400,7 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           }
           invalidateGameflowSessionCache();
           const retryData = await fetchSessionCached();
-          if (reqId !== requestSeq.value) return;
+          if (abortIfStale()) return;
           const rt = retryData?.gameData;
           if (rt?.teamOne?.length && rt?.teamTwo?.length) {
             currentT1 = rt.teamOne;
@@ -393,17 +411,17 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           if (rt?.teamTwo && rt.teamTwo.length > 0) currentT2 = rt.teamTwo;
           retried++;
         }
-        if (reqId !== requestSeq.value) return;
-        await processTeamData(currentT1, currentT2);
+        if (abortIfStale()) return;
+        await processTeamData(currentT1, currentT2, reqId);
         loading.value = false;
         return;
       }
 
-      if (reqId !== requestSeq.value) return;
-      await processTeamData(t1, t2);
+      if (abortIfStale()) return;
+      await processTeamData(t1, t2, reqId);
       void tryLiveTeamsFallback();
     } catch (e) {
-      if (reqId !== requestSeq.value) return;
+      if (abortIfStale()) return;
       console.error("加载 gameflow session 失败:", e);
       error.value = "加载对局数据失败";
     }

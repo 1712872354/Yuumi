@@ -151,7 +151,13 @@ export const useGameInfoStore = defineStore("gameInfo", () => {
     for (const [rawKey, data] of Object.entries(map)) {
       if (!data || seen.has(data)) continue;
       seen.add(data);
-      const cellId = /^\d+$/.test(rawKey) ? Number(rawKey) : undefined;
+      let cellId: number | undefined;
+      if (/^\d+$/.test(rawKey)) {
+        cellId = Number(rawKey);
+      } else if (rawKey.startsWith("pending:")) {
+        const n = Number(rawKey.slice("pending:".length));
+        if (!Number.isNaN(n)) cellId = n;
+      }
       setPlayer(data, {
         cellId,
         summonerId: data.info?.summonerId,

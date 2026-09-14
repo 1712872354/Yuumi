@@ -520,9 +520,12 @@ async fn do_show_opgg_build(
         _ => "",
     };
 
-    // 模式判定（与战绩页共用同一份 queueId→模式映射）
-    let mode = match session.queue_id {
-        Some(q) => crate::parsers::match_parser::queue_id_to_opgg_mode(q),
+    // 模式判定（与战绩页共用同一份 queueId→模式映射；未知队列退回本地推断）
+    let mode = match session
+        .queue_id
+        .and_then(crate::parsers::match_parser::queue_id_to_opgg_mode)
+    {
+        Some(m) => m,
         None => {
             if session.bench_enabled {
                 "aram"

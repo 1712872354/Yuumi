@@ -82,6 +82,7 @@ async fn apply_side_effects(
             log::info!("配置更新，重新启动 SignalR Hub 远程反代");
             let server_url = new_config.general.upload_api_url.clone();
             let user_id = new_config.signalr_user_id();
+            // start 内部会先 stop 旧实例，避免双连接
             crate::signalr::start(app_handle.clone(), server_url, user_id);
         } else {
             log::info!("配置更新，停止 SignalR Hub 远程反代");

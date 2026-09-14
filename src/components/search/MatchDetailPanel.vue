@@ -33,6 +33,7 @@ const taggingPlayer = ref<{
   puuid: string;
   name: string;
   championId: number;
+  tagLine?: string;
 } | null>(null);
 const tagInput = ref("");
 const tagging = ref(false);
@@ -42,6 +43,7 @@ function openTagDialog(p: {
   name: string;
   summonerId?: number;
   championId?: number;
+  tagLine?: string;
 }, myPuuid?: string) {
   if (!p.puuid || p.puuid === "00000000-0000-0000-0000-000000000000") return;
   if (myPuuid && p.puuid === myPuuid) return;
@@ -49,6 +51,7 @@ function openTagDialog(p: {
     puuid: p.puuid,
     name: p.name,
     championId: p.championId || 0,
+    tagLine: p.tagLine,
   };
   tagInput.value = "";
 }
@@ -65,6 +68,7 @@ async function confirmTag(myPuuid?: string) {
       tag,
       summonerName: taggingPlayer.value.name,
       championId: taggingPlayer.value.championId,
+      tagLine: taggingPlayer.value.tagLine,
       encountered: true,
     });
     showToast(t("savedPlayersPage.tagSaveSuccess", "已标记"), "success");

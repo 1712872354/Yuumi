@@ -3,6 +3,11 @@ import { ref } from "vue";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type { GameflowSession } from "../types/lcu";
+import {
+  LcuLifecycleEvents,
+  UploadEvents,
+  type UploadSuccessPayload,
+} from "../types/events";
 
 /** LCU gameflow 全部已知阶段（/lol-gameflow/v1/gameflow-phase） */
 export type GamePhase =
@@ -300,13 +305,13 @@ export async function initLcuListeners() {
   const store = useLcuStore();
 
   // 必须 await listen()，否则监听器可能还未注册就开始接收事件
-  await listen("lcu-client-started", () => {
+  await listen(LcuLifecycleEvents.ClientStarted, () => {
     console.log("[lcuStore] lcu-client-started");
     store.setConnected(true);
     store.connectionVersion++;
   });
 
-  await listen("lcu-client-ended", () => {
+  await listen(LcuLifecycleEvents.ClientEnded, () => {
     console.log("[lcuStore] lcu-client-ended");
     store.setConnected(false);
     store.setWsConnected(false);
@@ -315,22 +320,22 @@ export async function initLcuListeners() {
     store.setReadyCheck(null);
   });
 
-  await listen("lcu-ws-connected", () => {
+  await listen(LcuLifecycleEvents.WsConnected, () => {
     console.log("[lcuStore] lcu-ws-connected");
     store.setWsConnected(true);
   });
 
-  await listen("lcu-ws-disconnected", () => {
+  await listen(LcuLifecycleEvents.WsDisconnected, () => {
     console.log("[lcuStore] lcu-ws-disconnected");
     store.setWsConnected(false);
   });
 
   // Rust 侧 WS 连接失败时的错误信息（对应 try_connect 返回 Err）
-  await listen<string>("lcu-ws-error", (event) => {
+  await listen<string>(LcuLifecycleEvents.WsError, (event) => {
     console.error("[lcuStore] lcu-ws-error:", event.payload);
   });
 
-  await listen<LcuWebSocketEvent>("lcu-ws-event", (event) => {
+  await listen<LcuWebSocketEvent>(LcuLifecycleEvents.WsEvent, (event) => {
     const payload = event.payload;
     const uri: string = payload?.uri ?? "";
     const data = payload?.data;
@@ -375,7 +380,7 @@ export async function initLcuListeners() {
 
   // 对局结束自动上传成功事件（由 Rust UploadQueue worker 触发）
   // 此时官方服务器已完整结算该对局，触发战绩刷新通知
-  await listen<{ gameId: number }>("upload-success", (event) => {
+  await listen<UploadSuccessPayload>(UploadEvents.Success, (event) => {
     console.log(`[lcuStore] upload-success: gameId=${event.payload.gameId}`);
     store.gameEndedTrigger = Date.now();
   });

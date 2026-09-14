@@ -5,7 +5,7 @@ pub mod history;
 pub mod teammates;
 
 pub use history::{get_match_history, get_match_history_merged, get_match_history_sgp};
-pub use queue_time::{is_arena_queue, queue_id_to_opgg_mode};
+pub use queue_time::{is_arena_queue, is_tft_queue, queue_id_to_opgg_mode};
 pub use teammates::{get_recent_teammates, RecentTeammate, RecentTeammatesResponse};
 
 pub(crate) mod queue_time {
@@ -16,14 +16,22 @@ pub(crate) mod queue_time {
         matches!(queue_id, 1700 | 1710)
     }
 
-    /// 将 queueId 映射为 OP.GG 使用的游戏模式标识（供自动选人与其他调用方复用）
-    pub fn queue_id_to_opgg_mode(queue_id: i32) -> &'static str {
+    /// 云顶之弈队列（与前端 `TFT_QUEUE_IDS` 对齐；两边需同步改）
+    pub fn is_tft_queue(queue_id: i32) -> bool {
+        matches!(queue_id, 1090 | 1100 | 1130 | 1160)
+    }
+
+    /// 将 queueId 映射为 OP.GG 使用的游戏模式标识。
+    /// 未知/自定义队列返回 None，由调用方自行推断，避免误请求 ranked。
+    pub fn queue_id_to_opgg_mode(queue_id: i32) -> Option<&'static str> {
         match queue_id {
-            450 | 2400 | 2450 => "aram",
-            1700 | 1710 => "arena",
-            1300 => "nexus_blitz",
-            900 | 1900 => "urf",
-            _ => "ranked",
+            450 | 2400 | 2450 => Some("aram"),
+            1700 | 1710 => Some("arena"),
+            1300 => Some("nexus_blitz"),
+            900 | 1900 => Some("urf"),
+            // 召唤师峡谷常见对战（含人机）按 ranked 路径
+            400 | 420 | 430 | 440 | 480 | 490 | 800 | 810 | 830 | 840 | 850 => Some("ranked"),
+            _ => None,
         }
     }
 

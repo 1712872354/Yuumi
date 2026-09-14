@@ -45,14 +45,9 @@ async fn fetch_game_teammates(
     game_id: u64,
     target_puuid: &str,
 ) -> Option<GameTeammates> {
-    let url = format!("{}/lol-match-history/v1/games/{}", base, game_id);
-    let resp = http
-        .get(&url)
-        .header("Authorization", auth)
-        .send()
+    let detail = crate::lcu::match_detail::fetch_match_detail_json(http, base, auth, game_id)
         .await
         .ok()?;
-    let detail: serde_json::Value = resp.json().await.ok()?;
 
     let game_creation = detail
         .get("gameCreation")
@@ -103,10 +98,10 @@ async fn fetch_game_teammates(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
 
-            target_team = if is_arena_queue(queue_id) {
-                stats.get("subteamPlacement").and_then(|v| v.as_i64())
-            } else {
-                p.get("teamId").and_then(|v| v.as_i64())
+            target_team = {
+                let stats_obj = p.get("stats").cloned().unwrap_or(serde_json::Value::Null);
+                crate::lcu::match_detail::resolve_team_id(p, &stats_obj, is_arena_queue(queue_id))
+                    .map(|v| v as i64)
             };
             break;
         }
@@ -125,12 +120,10 @@ async fn fetch_game_teammates(
             continue;
         }
 
-        let p_team = if is_arena_queue(queue_id) {
-            p.get("stats")
-                .and_then(|s| s.get("subteamPlacement"))
-                .and_then(|v| v.as_i64())
-        } else {
-            p.get("teamId").and_then(|v| v.as_i64())
+        let p_team = {
+            let stats_obj = p.get("stats").cloned().unwrap_or(serde_json::Value::Null);
+            crate::lcu::match_detail::resolve_team_id(p, &stats_obj, is_arena_queue(queue_id))
+                .map(|v| v as i64)
         };
 
         if p_team == Some(target_team) {
@@ -232,6 +225,13 @@ pub async fn get_recent_teammates(
         lock.clone()
     };
 
+    // 服务端上限：防止前端一次性传入过多 game_ids 打满 LCU
+    const MAX_RECENT_TEAMMATE_GAMES: usize = 20;
+    let game_ids: Vec<u64> = game_ids
+        .into_iter()
+        .take(MAX_RECENT_TEAMMATE_GAMES)
+        .collect();
+
     let mut handles = Vec::new();
     for game_id in game_ids {
         let auth = auth.clone();
@@ -282,6 +282,7 @@ pub async fn get_recent_teammates(
                 }
             });
             entry.total += 1;
+            entry.last_play_time = entry.last_play_time.max(game.game_creation);
             if !game.remake {
                 if p.win {
                     entry.wins += 1;

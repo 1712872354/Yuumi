@@ -65,6 +65,7 @@ declare module 'vue' {
     OpggModal: typeof import('./components/OpggModal.vue')['default']
     OpggWindow: typeof import('./components/OpggWindow.vue')['default']
     PersonalizationSection: typeof import('./components/settings/PersonalizationSection.vue')['default']
+    PipelineStatsCard: typeof import('./components/tools/PipelineStatsCard.vue')['default']
     PlayerInfoCard: typeof import('./components/gameinfo/PlayerInfoCard.vue')['default']
     ProfileBackgroundCard: typeof import('./components/tools/quickactions/ProfileBackgroundCard.vue')['default']
     RankSpoofCard: typeof import('./components/tools/quickactions/RankSpoofCard.vue')['default']

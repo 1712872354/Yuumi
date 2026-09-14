@@ -29,6 +29,8 @@ pub struct SaveSavedPlayerInput {
     pub encountered: bool,
     #[serde(default)]
     pub champion_id: i32,
+    /// Riot ID tagLine；为空时 upsert 保留已有值
+    pub tag_line: Option<String>,
 }
 
 /// 保存/更新玩家记录（upsert）。tag 为 None 时保留已有 tag，Some 时覆盖。
@@ -42,11 +44,12 @@ pub async fn save_saved_player(
         let last_met = if dto.encountered { Some(ts) } else { None };
         conn.execute(
             "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?10, ?8, ?9)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?11, ?10, ?8, ?9)
              ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
                tag = CASE WHEN excluded.tag IS NULL THEN saved_players.tag ELSE excluded.tag END,
                summoner_name = CASE WHEN excluded.summoner_name = '' THEN saved_players.summoner_name ELSE excluded.summoner_name END,
                profile_icon_id = CASE WHEN excluded.profile_icon_id = 0 THEN saved_players.profile_icon_id ELSE excluded.profile_icon_id END,
+               tag_line = CASE WHEN excluded.tag_line IS NULL OR excluded.tag_line = '' THEN saved_players.tag_line ELSE excluded.tag_line END,
                champion_id = CASE WHEN excluded.champion_id = 0 THEN saved_players.champion_id ELSE excluded.champion_id END,
                update_at = excluded.update_at,
                last_met_at = COALESCE(excluded.last_met_at, saved_players.last_met_at)",
@@ -61,6 +64,7 @@ pub async fn save_saved_player(
                 ts,
                 last_met,
                 dto.champion_id,
+                dto.tag_line.unwrap_or_default(),
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -122,32 +126,55 @@ pub async fn query_all_saved_players(
     let page_size = page_size.unwrap_or(50).clamp(1, 200);
     let where_clause = match filter.as_deref() {
         Some("tagged") => {
-            " AND ((tag IS NOT NULL AND tag != '') OR (auto_tag IS NOT NULL AND auto_tag != '') OR list_kind IN ('black', 'white'))"
+            " AND ((saved_players.tag IS NOT NULL AND saved_players.tag != '') OR (saved_players.auto_tag IS NOT NULL AND saved_players.auto_tag != '') OR saved_players.list_kind IN ('black', 'white'))"
         }
-        Some("black") => " AND list_kind = 'black'",
-        Some("white") => " AND list_kind = 'white'",
-        Some("multiple") => " AND (SELECT COUNT(*) FROM encountered_games eg WHERE eg.puuid = saved_players.puuid AND eg.self_puuid = saved_players.self_puuid) >= 2",
+        Some("black") => " AND saved_players.list_kind = 'black'",
+        Some("white") => " AND saved_players.list_kind = 'white'",
+        Some("multiple") => " AND COALESCE(enc.cnt, 0) >= 2",
         _ => "",
     }
     .to_string();
     with_db(app_state.inner(), move |conn| {
-        let count: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM saved_players WHERE self_puuid = ?1{where_clause}"),
-                params![self_puuid],
-                |r| r.get(0),
+        // count 与列表共用同一套 filter 语义；multiple 依赖聚合别名 enc
+        let count_sql = if filter.as_deref() == Some("multiple") {
+            format!(
+                "SELECT COUNT(*) FROM saved_players \
+                 LEFT JOIN (SELECT puuid, self_puuid, COUNT(*) AS cnt FROM encountered_games GROUP BY puuid, self_puuid) enc \
+                   ON enc.puuid = saved_players.puuid AND enc.self_puuid = saved_players.self_puuid \
+                 WHERE saved_players.self_puuid = ?1{where_clause}"
             )
+        } else {
+            format!("SELECT COUNT(*) FROM saved_players WHERE self_puuid = ?1{where_clause}")
+        };
+        let count: i64 = conn
+            .query_row(&count_sql, params![self_puuid], |r| r.get(0))
             .map_err(|e| e.to_string())?;
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT {}, \
-                 (SELECT queue_type FROM encountered_games eg WHERE eg.puuid = saved_players.puuid AND eg.self_puuid = saved_players.self_puuid ORDER BY eg.update_at DESC LIMIT 1), \
-                 (SELECT COUNT(*) FROM encountered_games eg WHERE eg.puuid = saved_players.puuid AND eg.self_puuid = saved_players.self_puuid) AS encounter_cnt \
-                 FROM saved_players WHERE self_puuid = ?1{where_clause} \
-                 ORDER BY last_met_at DESC, update_at DESC LIMIT ?2 OFFSET ?3",
-                SAVED_PLAYER_COLS
-            ))
-            .map_err(|e| e.to_string())?;
+
+        // 聚合相遇次数/最近队列，避免每行 correlated subquery（N+1）
+        let list_sql = format!(
+            "SELECT {cols}, \
+               last_q.queue_type AS last_queue_type, \
+               COALESCE(enc.cnt, 0) AS encounter_cnt \
+             FROM saved_players \
+             LEFT JOIN ( \
+               SELECT puuid, self_puuid, queue_type, \
+                      ROW_NUMBER() OVER (PARTITION BY puuid, self_puuid ORDER BY update_at DESC) AS rn \
+               FROM encountered_games \
+             ) last_q ON last_q.puuid = saved_players.puuid AND last_q.self_puuid = saved_players.self_puuid AND last_q.rn = 1 \
+             LEFT JOIN ( \
+               SELECT puuid, self_puuid, COUNT(*) AS cnt \
+               FROM encountered_games GROUP BY puuid, self_puuid \
+             ) enc ON enc.puuid = saved_players.puuid AND enc.self_puuid = saved_players.self_puuid \
+             WHERE saved_players.self_puuid = ?1{where_clause} \
+             ORDER BY saved_players.last_met_at DESC, saved_players.update_at DESC \
+             LIMIT ?2 OFFSET ?3",
+            cols = SAVED_PLAYER_COLS
+                .split(", ")
+                .map(|c| format!("saved_players.{c}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        let mut stmt = conn.prepare(&list_sql).map_err(|e| e.to_string())?;
         let data = stmt
             .query_map(
                 params![self_puuid, page_size, (page - 1) * page_size],

@@ -4,14 +4,15 @@ import {
   fetchCurrentSummoner,
   fetchSummonerByPuuid,
   fetchMatchHistorySmart,
-  lcuRequest,
 } from "../api/lcu";
 import type { SummonerDisplay, MatchDisplay } from "../api/lcu";
-import type { RankDisplaySource, RankedQueueEntry, RankedStats } from "../types/lcu";
+import type { RankDisplaySource, RankedQueueEntry } from "../types/lcu";
 import { lazySetItem } from "../utils/lazyStorage";
 import { QUEUE_FILTER_OPTIONS, formatRankDisplay } from "../utils/queueMeta";
 import { getQueueName as resolveQueueName } from "../utils/queueName";
 import { computeStatsSummary } from "./gamePlayerStats";
+import { mergeMatchLists } from "./gameMatchesCache";
+import { fetchRankedStatsCached } from "./playerMastery";
 
 // 模块作用域内存缓存单例
 let cachedSummoner: SummonerDisplay | null = null;
@@ -144,11 +145,8 @@ export function useMatchHistory() {
 
   async function loadRankedStats(puuid: string) {
     try {
-      const resp = await lcuRequest<RankedStats>(
-        "GET",
-        `/lol-ranked/v1/ranked-stats/${puuid}`,
-      );
-      if (resp.success && resp.data && resp.data.queues) {
+      const resp = await fetchRankedStatsCached(puuid);
+      if (resp.success && resp.data?.queues) {
         rankedQueues.value = resp.data.queues;
       }
     } catch (e) {
@@ -194,16 +192,11 @@ export function useMatchHistory() {
       if (raw) cached = JSON.parse(raw);
     } catch { /* ignore */ }
 
-    const seen = new Set<number>();
-    const merged = [...fresh, ...cached]
-      .filter((m) => {
-        if (seen.has(m.gameId)) return false;
-        seen.add(m.gameId);
-        return true;
-      })
-      .sort((a, b) => b.timeStamp - a.timeStamp)
-      .slice(0, careerGamesNumber.value);
-
+    const merged = mergeMatchLists(
+      fresh,
+      cached,
+      careerGamesNumber.value,
+    );
     recentMatches.value = merged;
     lazySetItem(MATCHES_CACHE_KEY(puuid), merged);
   }

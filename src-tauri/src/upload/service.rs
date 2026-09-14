@@ -37,6 +37,7 @@ pub async fn upload_single_task(
                 Err(err_msg) => {
                     // 无法从 LCU 拉取详情时，查找是否有之前已被落盘的 pending 记录
                     let existing = load_pending_uploads(app_handle)
+                        .await
                         .into_iter()
                         .find(|i| i.game_id == game_id);
                     if let Some(item) = existing {
@@ -57,7 +58,7 @@ pub async fn upload_single_task(
 
     match post_payload_to_api(&payload, upload_url).await {
         Ok(status) => {
-            remove_pending_upload(app_handle, game_id);
+            remove_pending_upload(app_handle, game_id).await;
             Ok(status)
         }
         Err(err_msg) => {
@@ -66,7 +67,7 @@ pub async fn upload_single_task(
                 game_id,
                 err_msg
             );
-            add_or_update_pending_upload(app_handle, payload, err_msg.clone());
+            add_or_update_pending_upload(app_handle, payload, err_msg.clone()).await;
             Err(err_msg)
         }
     }
@@ -93,22 +94,17 @@ async fn fetch_payload_from_lcu(
         .as_ref()
         .map(|(_, puuid)| puuid.as_str());
 
-    let detail_url = format!("{}/lol-match-history/v1/games/{}", base, game_id);
-    let resp = lcu_client
-        .get(&detail_url)
-        .header("Authorization", &auth)
-        .send()
-        .await
-        .map_err(|e| format!("获取对局详情失败: {}", e))?;
+    let detail_url_base = base.clone();
+    let detail = crate::lcu::match_detail::fetch_match_detail_json(
+        &lcu_client,
+        &detail_url_base,
+        &auth,
+        game_id,
+    )
+    .await?;
 
-    if !resp.status().is_success() {
-        return Err(format!("获取对局详情: HTTP {}", resp.status()));
-    }
-
-    let game_detail: GameDetail = resp
-        .json()
-        .await
-        .map_err(|e| format!("解析对局详情失败: {}", e))?;
+    let game_detail: GameDetail =
+        serde_json::from_value(detail).map_err(|e| format!("解析对局详情失败: {}", e))?;
 
     let champion_names = {
         let state = app_handle.state::<crate::AppState>();

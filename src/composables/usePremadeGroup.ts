@@ -44,7 +44,11 @@ export function computePremadeColors(
 export function buildPremadeGroups(
   team: PremadePlayerLike[],
   colors: Record<number, number>,
-  playerDataMap: Record<string | number, PlayerData>,
+  lookupPlayer: (ref: {
+    puuid?: string;
+    summonerId?: number;
+    cellId?: number;
+  }) => PlayerData | undefined,
 ): PremadeGroup[] {
   if (!team || team.length === 0 || !colors) return [];
   const map: Record<number, PremadeMember[]> = {};
@@ -62,8 +66,11 @@ export function buildPremadeGroups(
 
     if (!map[cIdx]) map[cIdx] = [];
     const champId = p.championId || p.championPickIntent || 0;
-    const pData =
-      cid !== undefined ? playerDataMap[cid] : sid ? playerDataMap[sid] : undefined;
+    const pData = lookupPlayer({
+      puuid: p.puuid,
+      summonerId: sid,
+      cellId: cid,
+    });
     const name =
       pData?.info?.gameName ||
       pData?.info?.displayName ||
@@ -91,7 +98,11 @@ export function usePremadeGroup(
   theirTeam: Ref<PremadePlayerLike[]>,
   sessionAllyTeam: Ref<PremadePlayerLike[]>,
   sessionEnemyTeam: Ref<PremadePlayerLike[]>,
-  playerData: Ref<Record<string | number, PlayerData>>,
+  lookupPlayer: (ref: {
+    puuid?: string;
+    summonerId?: number;
+    cellId?: number;
+  }) => PlayerData | undefined,
   premadeColorsMy: Ref<Record<number, number>>,
   premadeColorsTheir: Ref<Record<number, number>>,
 ) {
@@ -143,7 +154,7 @@ export function usePremadeGroup(
     return buildPremadeGroups(
       teamList,
       premadeColorsMy.value,
-      playerData.value,
+      lookupPlayer,
     );
   });
 
@@ -154,7 +165,7 @@ export function usePremadeGroup(
     return buildPremadeGroups(
       teamList,
       premadeColorsTheir.value,
-      playerData.value,
+      lookupPlayer,
     );
   });
 
