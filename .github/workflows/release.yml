@@ -63,6 +63,9 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -129,26 +132,37 @@ jobs:
         shell: pwsh
         run: |
           $VERSION = "${{ needs.create-release.outputs.version }}" -replace '^v', ''
-          $config = Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json
-          $config.version = $VERSION
-          $config | ConvertTo-Json -Depth 100 | Set-Content src-tauri/tauri.conf.json
+          $path = "src-tauri/tauri.conf.json"
+          $raw = Get-Content $path -Raw
+          # 仅替换顶层 version 字段，避免 ConvertTo-Json 破坏结构
+          $raw = $raw -replace '("version"\s*:\s*")[^"]+(")', "`$1$VERSION`$2"
+          Set-Content -Path $path -Value $raw -Encoding UTF8
+          Write-Host "Set version to $VERSION"
+          Select-String -Path $path -Pattern '"version"'
 
       - name: Generate changelog
         id: changelog
         shell: bash
         run: |
+          set +e
           TAG="${{ needs.create-release.outputs.version }}"
-          git fetch --tags --quiet
-          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -1 || echo "")
+          git fetch --tags --force --quiet || true
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG}$" | head -1)
           if [ -z "$PREV_TAG" ]; then
             NOTES=$(git log --format="- %s" -20)
           else
             NOTES=$(git log --format="- %s" "${PREV_TAG}..${TAG}")
           fi
-          # 写入多行 output
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "$NOTES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          if [ -z "$NOTES" ]; then
+            NOTES="- Initial release"
+          fi
+          {
+            echo "notes<<EOF"
+            echo "$NOTES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Changelog:"
+          echo "$NOTES"
 
       - name: Build Tauri (Windows)
         run: pnpm tauri build
@@ -287,19 +301,24 @@ jobs:
       - name: Get changelog
         id: changelog
         run: |
+          set +e
           TAG_NAME="${{ needs.create-release.outputs.version }}"
-          # 获取上一个 tag
-          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG_NAME}$" | head -1 || echo "")
+          PREV_TAG=$(git tag --sort=-creatordate | grep -v "^${TAG_NAME}$" | head -1)
           if [ -z "$PREV_TAG" ]; then
             CHANGELOG=$(git log --oneline --format="- %s" -20)
           else
             CHANGELOG=$(git log --oneline --format="- %s" "${PREV_TAG}..${TAG_NAME}")
           fi
-          echo "notes<<EOF" >> $GITHUB_OUTPUT
-          echo "## Changes in this release" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="- Initial release"
+          fi
+          {
+            echo "notes<<EOF"
+            echo "## Changes in this release"
+            echo ""
+            echo "$CHANGELOG"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download Windows installer artifacts
         uses: actions/download-artifact@v4
