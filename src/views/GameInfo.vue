@@ -345,7 +345,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
 .team-title {
   font-size: 14px;
   font-weight: 800;
-  color: var(--text-primary, #1f2937);
+  color: var(--text-color, #1f2937);
   letter-spacing: 0.02em;
 }
 

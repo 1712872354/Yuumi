@@ -142,6 +142,15 @@ const totalGames = computed(() => winCount.value + lossCount.value);
 const winRate = computed(() => props.playerData?.winRate);
 const avgKda = computed(() => props.playerData?.avgKda);
 
+const avgCs = computed(() => {
+  const list = props.playerData?.matches;
+  if (!list || list.length === 0) return undefined;
+  const real = list.filter((m) => !m.remake);
+  if (real.length === 0) return undefined;
+  const sum = real.reduce((acc, m) => acc + (m.cs || 0), 0);
+  return Math.round(sum / real.length);
+});
+
 function getWinRateClass(rate: number | undefined): string {
   if (rate === undefined) return "stat-dim";
   if (rate >= 53) return "stat-win";
@@ -325,6 +334,10 @@ function copyName(e: MouseEvent) {
             {{ avgKda !== undefined ? avgKda.toFixed(1) : "—" }}
           </span>
         </span>
+        <span v-if="avgCs !== undefined" class="si">
+          <span class="si-l">CS:</span>
+          <span class="si-v">{{ avgCs }}</span>
+        </span>
       </div>
       <div v-if="cardTags.length" class="tag-row">
         <span
@@ -361,6 +374,7 @@ function copyName(e: MouseEvent) {
               'mi-loss': match.win === false,
               'mi-remake': match.win === null || match.remake,
             }"
+            :title="match.duration ? `${match.name} · ${match.duration}` : match.name"
           >
             <LcuImage :src="getChampionIcon(match.championId)" class="mi-champ" />
             <div class="mi-mid">
@@ -370,12 +384,15 @@ function copyName(e: MouseEvent) {
                 <span v-if="match.remake" class="mi-remake-tag">重开</span>
               </span>
             </div>
-            <div class="mi-kda">
-              <span class="k">{{ match.kills }}</span>
-              <span class="s">/</span>
-              <span class="d">{{ match.deaths }}</span>
-              <span class="s">/</span>
-              <span class="a">{{ match.assists }}</span>
+            <div class="mi-right">
+              <div class="mi-kda">
+                <span class="k">{{ match.kills }}</span>
+                <span class="s">/</span>
+                <span class="d">{{ match.deaths }}</span>
+                <span class="s">/</span>
+                <span class="a">{{ match.assists }}</span>
+              </div>
+              <div v-if="match.cs" class="mi-cs">{{ match.cs }} CS</div>
             </div>
           </div>
         </template>
@@ -394,10 +411,10 @@ function copyName(e: MouseEvent) {
   padding: 8px 9px 7px;
   border-radius: 8px;
   border: 2px solid transparent;
-  background: rgba(255, 255, 255, 0.65);
+  background: var(--card-bg, rgba(255, 255, 255, 0.65));
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.07);
+  box-shadow: var(--shadow-sm, 0 1px 6px rgba(0, 0, 0, 0.07));
   overflow: hidden;
   height: 100%;
   min-height: 0;
@@ -405,13 +422,13 @@ function copyName(e: MouseEvent) {
 }
 .pic:hover {
   filter: brightness(1.03);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-md, 0 2px 10px rgba(0, 0, 0, 0.1));
 }
 .pic.ally {
-  background: rgba(59, 130, 246, 0.05);
+  background: color-mix(in srgb, var(--tier-blue, #3b82f6) 6%, var(--card-bg, rgba(255, 255, 255, 0.65)));
 }
 .pic.enemy {
-  background: rgba(244, 63, 94, 0.05);
+  background: color-mix(in srgb, #f43f5e 6%, var(--card-bg, rgba(255, 255, 255, 0.65)));
 }
 
 .premade-corner {
@@ -597,9 +614,9 @@ function copyName(e: MouseEvent) {
   flex-direction: column;
   gap: 2px;
   flex-shrink: 0;
-  padding: 3px 0;
-  border-top: 1px solid rgba(0, 0, 0, 0.06);
-  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  padding: 4px 0;
+  border-top: 1px solid var(--border-color, rgba(0, 0, 0, 0.06));
+  border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.06));
 }
 .stats-line {
   display: flex;
@@ -625,10 +642,10 @@ function copyName(e: MouseEvent) {
   color: var(--text-color, #111827);
 }
 .stat-win {
-  color: #059669;
+  color: var(--win-color, #059669);
 }
 .stat-loss {
-  color: #dc2626;
+  color: var(--loss-color, #dc2626);
 }
 .stat-normal {
   color: var(--text-color, #111827);
@@ -648,12 +665,12 @@ function copyName(e: MouseEvent) {
   margin-left: auto;
 }
 .badge-win {
-  background: rgba(5, 150, 105, 0.15);
-  color: #059669;
+  background: var(--win-bg, rgba(5, 150, 105, 0.15));
+  color: var(--win-color, #059669);
 }
 .badge-loss {
-  background: rgba(220, 38, 38, 0.15);
-  color: #dc2626;
+  background: var(--loss-bg, rgba(220, 38, 38, 0.15));
+  color: var(--loss-color, #dc2626);
 }
 
 .tag-row {
@@ -741,22 +758,27 @@ function copyName(e: MouseEvent) {
   gap: 6px;
   height: 34px;
   margin-bottom: 2px;
-  padding: 0 6px;
+  padding: 0 6px 0 8px;
   border-radius: 4px;
+  border-left: 3px solid transparent;
   flex-shrink: 0;
   transition: filter 0.12s ease;
+  cursor: default;
 }
 .mi:hover {
   filter: brightness(1.06);
 }
 .mi-win {
-  background: rgba(59, 130, 246, 0.14);
+  background: var(--win-bg, rgba(59, 130, 246, 0.14));
+  border-left-color: var(--tier-blue, #3b82f6);
 }
 .mi-loss {
-  background: rgba(220, 38, 38, 0.17);
+  background: var(--loss-bg, rgba(220, 38, 38, 0.17));
+  border-left-color: var(--death-color, #dc2626);
 }
 .mi-remake {
-  background: rgba(156, 163, 175, 0.14);
+  background: var(--hover-bg, rgba(156, 163, 175, 0.14));
+  border-left-color: var(--text-dimmed, #9ca3af);
 }
 
 .mi-champ {
@@ -808,11 +830,25 @@ function copyName(e: MouseEvent) {
   text-align: right;
   white-space: nowrap;
 }
+.mi-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 0;
+  flex-shrink: 0;
+  line-height: 1.15;
+}
+.mi-cs {
+  font-size: 9.5px;
+  color: var(--text-dimmed, #9ca3af);
+  font-variant-numeric: tabular-nums;
+}
 .mi-kda .k {
   color: var(--text-color, #111827);
 }
 .mi-kda .d {
-  color: #ef4444;
+  color: var(--death-color, #ef4444);
 }
 .mi-kda .a {
   color: var(--text-color, #111827);
