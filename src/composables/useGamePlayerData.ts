@@ -5,14 +5,10 @@ import { useGameInfoStore } from "../store/gameInfoStore";
 import {
   getGameflowPhase,
   getChampSelectSession,
-  fetchMatchHistorySmart,
   fetchCurrentSummoner,
-  lcuRequest,
   fetchConfig,
-  fetchPlayerFateInfo,
   fetchLiveGameTeams,
   type LiveGamePlayer,
-  type MatchDisplay,
   type AppConfig,
 } from "../api/lcu";
 import type {
@@ -21,16 +17,11 @@ import type {
   ChampSelectSessionLike,
 } from "../types/gameInfo";
 import { resolvePlayerChampionId } from "../types/gameInfo";
-import type {
-  GameflowParticipant,
-  RankedQueueEntry,
-} from "../types/lcu";
-import type { SummonerDisplay } from "../api/lcu";
+import type { GameflowParticipant } from "../types/lcu";
 import { computePremadeColors } from "./usePremadeGroup";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
-import { fetchPlayerMastery, fetchRankedStatsCached } from "./playerMastery";
+import { fetchPlayerMastery } from "./playerMastery";
 import {
-  NEW_PLAYER_MAX_LEVEL,
   isIdentityCompatible,
   inheritPlaceholderChampion,
 } from "./identityUtils";
@@ -48,12 +39,7 @@ import {
   fetchSessionCached,
   invalidateGameflowSessionCache,
 } from "./gameflowSessionCache";
-import { mergeMatchesWithCache } from "./gameMatchesCache";
-import {
-  computeMatchStats,
-  computeStreak,
-  isLikelyBotPlayer,
-} from "./gamePlayerStats";
+import { createLoadPlayerData } from "./playerDetailLoader";
 
 // ── 向后兼容 re-export（GameInfo.vue 等外部引用路径保持不变）
 export { fetchPlayerMastery } from "./playerMastery";
@@ -363,366 +349,16 @@ export function useGamePlayerData(
     inheritPlaceholderChampion(playerData.value[cellId], cellId) ||
     0;
 
-  async function loadPlayerData(
-    cellId: number,
-    summonerId: number,
-    playerPuuid?: string,
-    fallbackPlayer?: PremadePlayerLike,
-  ) {
-    if (!summonerId && !playerPuuid && !fallbackPlayer) return;
-
-    // 防止 cellId 误传为 summonerId（如 0..9 的 cellId）
-    const realSummonerId = summonerId && summonerId !== cellId ? summonerId : 0;
-
-    // 身份优先查找：puuid → summonerId → cellId。cell 槽在选人/对局切换或顺序变化时
-    // 可能残留异队旧数据，身份键优先才能命中同一玩家的已加载项，避免误杀重拉
-    const candidates = [
-      playerPuuid ? playerData.value[playerPuuid] : undefined,
-      summonerId ? playerData.value[summonerId] : undefined,
-      playerData.value[cellId],
-    ];
-    const incoming = { puuid: playerPuuid, summonerId: realSummonerId, cellId };
-    const reusable = candidates.find((e) => {
-      // 仅已加载项可复用（loading 占位不可复用，必须走真实拉取）
-      if (!e?.info || e.loading) return false;
-      // 占位（空 puuid / cellId 兜底 sid）→真实身份必须强制重载
-      const ePuuid = (e.info.puuid || "").trim();
-      const eSid = e.info.summonerId || 0;
-      if (incoming.puuid && !ePuuid) return false;
-      if (incoming.summonerId && (!eSid || eSid === cellId)) return false;
-      return isIdentityCompatible(e, incoming);
-    });
-    if (reusable) {
-      gameInfo.setPlayer(reusable, {
-        cellId,
-        summonerId: realSummonerId,
-        puuid: playerPuuid,
-      });
-
-      // 如果复用的条目缺少熟练度（如旧版缓存或部分加载异常），后台静默异步补填
-      if ((!reusable.masteries || reusable.masteries.length === 0) && (playerPuuid || realSummonerId)) {
-        const targetPuuid = playerPuuid || reusable.info?.puuid;
-        const targetSid = realSummonerId || reusable.info?.summonerId;
-        const isMe =
-          targetSid === currentSummonerId.value ||
-          (!!targetPuuid && targetPuuid === currentSummonerPuuid.value);
-        fetchPlayerMastery(targetPuuid, targetSid, isMe)
-          .then((m) => {
-            if (m && m.length > 0) {
-              reusable.masteries = m;
-              debouncedSavePlayerData();
-            }
-          })
-          .catch(() => {
-            /* ignore */
-          });
-      }
-      return;
-    }
-    // 无可复用的同身份已加载项，继续往下加载真实数据
-
-    // 机器人/电脑玩家本地极速识别，无需请求 LCU API，避免 404 和延迟
-    const isBotPlayer = isLikelyBotPlayer({
-      fallbackBot: fallbackPlayer?.bot,
-      fallbackIsBot: fallbackPlayer?.isBot,
-      isHumanoid: (fallbackPlayer as PremadePlayerLike & { isHumanoid?: boolean })
-        ?.isHumanoid,
-      botChampionId: fallbackPlayer?.botChampionId,
-      displayName: fallbackPlayer?.displayName,
-      summonerName: fallbackPlayer?.summonerName,
-      realSummonerId,
-      playerPuuid,
-    });
-
-    if (isBotPlayer && fallbackPlayer) {
-      const botName =
-        fallbackPlayer.displayName ||
-        fallbackPlayer.summonerName ||
-        fallbackPlayer.botName ||
-        fallbackPlayer.gameName ||
-        `电脑${cellId + 1}`;
-      const iconId = fallbackPlayer.profileIconId ?? 29;
-      const botInfo: SummonerDisplay = {
-        accountId: 0,
-        summonerId: realSummonerId || 0,
-        puuid: playerPuuid || "",
-        displayName: botName,
-        gameName: botName,
-        tagLine: "",
-        profileIconId: iconId,
-        profileIconUrl: `/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`,
-        summonerLevel: 0,
-        percentCompleteForNextLevel: 0,
-        xpSinceLastLevel: 0,
-        xpUntilNextLevel: 0,
-      };
-      const botDataObj: PlayerData = {
-        info: botInfo,
-        matches: [],
-        ranked: { solo: null, flex: null },
-        loading: false,
-        matchHistoryHidden: true,
-        championId: fallbackPlayer.championId || fallbackPlayer.botChampionId || 0,
-      };
-      gameInfo.setPlayer(botDataObj, {
-        cellId,
-        summonerId: realSummonerId,
-        puuid: playerPuuid,
-      });
-      debouncedSavePlayerData();
-      return;
-    }
-
-    gameInfo.setPlayer(
-      {
-        info: null,
-        matches: [],
-        ranked: { solo: null, flex: null },
-        loading: true,
-        // 拉取窗口内保留英雄，避免加载中头像空白（仅继承无身份占位的）
-        championId: resolveCarryChampionId(fallbackPlayer, cellId),
-      },
-      { cellId, summonerId: realSummonerId, puuid: playerPuuid },
-    );
-
-    try {
-      let info: SummonerDisplay | null = null;
-      if (playerPuuid) {
-        const resp = await lcuRequest<SummonerDisplay>(
-          "GET",
-          `/lol-summoner/v2/summoners/puuid/${playerPuuid}`,
-        );
-        if (resp.success && resp.data) {
-          info = resp.data;
-        }
-      }
-      if (!info && realSummonerId) {
-        const resp = await lcuRequest<SummonerDisplay>(
-          "GET",
-          `/lol-summoner/v1/summoners/${realSummonerId}`,
-        );
-        if (resp.success && resp.data) {
-          info = resp.data;
-        }
-      }
-      if (!info && (fallbackPlayer?.displayName || fallbackPlayer?.gameName)) {
-        const queryName = fallbackPlayer.gameName || fallbackPlayer.displayName;
-        if (queryName) {
-          try {
-            const resp = await lcuRequest<SummonerDisplay>(
-              "GET",
-              `/lol-summoner/v1/summoners?name=${encodeURIComponent(queryName)}`,
-            );
-            if (resp.success && resp.data) {
-              info = resp.data;
-            }
-          } catch {
-            /* ignore */
-          }
-        }
-      }
-
-      let matchHistoryHidden = false;
-
-      if (!info) {
-        // 在选人阶段，只有当玩家明确为敌方队伍且尚未公开身份时，才属于敌方等待
-        const isEnemy = store.champSelectSession?.theirTeam?.some(
-          (t) => (t.cellId !== undefined && t.cellId === cellId) || (t.summonerId && t.summonerId === realSummonerId),
-        );
-        const isChampSelectEnemyWaiting =
-          store.gamePhase === "ChampSelect" &&
-          isEnemy &&
-          !playerPuuid &&
-          !realSummonerId &&
-          !fallbackPlayer?.puuid &&
-          !fallbackPlayer?.summonerId;
-
-        if (fallbackPlayer && !isChampSelectEnemyWaiting) {
-          const fallbackDisplayName =
-            fallbackPlayer.displayName ||
-            (fallbackPlayer.gameName
-              ? fallbackPlayer.tagLine
-                ? `${fallbackPlayer.gameName}#${fallbackPlayer.tagLine}`
-                : fallbackPlayer.gameName
-              : fallbackPlayer.summonerName) ||
-            `玩家${cellId + 1}`;
-          const iconId = fallbackPlayer.profileIconId ?? 29;
-          info = {
-            accountId: 0,
-            summonerId: realSummonerId || 0,
-            puuid: playerPuuid || fallbackPlayer.puuid || "",
-            displayName: fallbackDisplayName,
-            gameName: fallbackPlayer.gameName || fallbackDisplayName,
-            tagLine: fallbackPlayer.tagLine || "",
-            profileIconId: iconId,
-            profileIconUrl: `/lol-game-data/assets/v1/profile-icons/${iconId}.jpg`,
-            summonerLevel: 0,
-            percentCompleteForNextLevel: 0,
-            xpSinceLastLevel: 0,
-            xpUntilNextLevel: 0,
-          };
-          matchHistoryHidden = true;
-        } else {
-          gameInfo.setPlayer(
-            {
-              info: null,
-              matches: [],
-              ranked: { solo: null, flex: null },
-              loading: false,
-              // 拉取失败也保留所选英雄，只展示头像与隐藏标识，不留空白列
-              championId: resolveCarryChampionId(fallbackPlayer, cellId),
-            },
-            { cellId, summonerId: realSummonerId, puuid: playerPuuid },
-          );
-          return;
-        }
-      }
-
-      const safeInfo = info;
-      if (!safeInfo.profileIconUrl && (safeInfo.profileIconId !== undefined || safeInfo.profileIconId !== null)) {
-        safeInfo.profileIconUrl = `/lol-game-data/assets/v1/profile-icons/${safeInfo.profileIconId ?? 29}.jpg`;
-      }
-
-      const filterEnabled = appConfig.value?.Functions?.GameInfoFilter ?? false;
-      const maxMatches = filterEnabled ? 50 : 10;
-
-      const [rawMatches, rankedResp, masteryData] = await Promise.all([
-        safeInfo.puuid
-          ? fetchMatchHistorySmart(safeInfo.puuid, 0, maxMatches)
-              .then((res) => {
-                if (!res || res.length === 0) {
-                  // 空列表有两种可能：隐藏战绩，或从未打过的新号。
-                  // 对局中隐藏战绩常返回空，但新号一定是低等级（30 级以下），新号不标隐藏
-                  const lvl = safeInfo.summonerLevel ?? 0;
-                  if (!(lvl > 0 && lvl < NEW_PLAYER_MAX_LEVEL)) {
-                    matchHistoryHidden = true;
-                  }
-                }
-                return res || [];
-              })
-              .catch((e) => {
-                matchHistoryHidden = true;
-                console.debug(`[GameInfo] 战绩拉取失败/已隐藏 (puuid: ${safeInfo.puuid}):`, e);
-                return [] as MatchDisplay[];
-              })
-          : Promise.resolve([] as MatchDisplay[]),
-        safeInfo.puuid
-          ? fetchRankedStatsCached(safeInfo.puuid)
-          : Promise.resolve({ success: false as const }),
-        fetchPlayerMastery(
-          safeInfo.puuid,
-          summonerId,
-          summonerId === currentSummonerId.value ||
-            (!!safeInfo.puuid && safeInfo.puuid === currentSummonerPuuid.value),
-        ),
-      ]);
-
-      const isCurrentPlayer =
-        summonerId === currentSummonerId.value ||
-        (!!safeInfo.puuid && safeInfo.puuid === currentSummonerPuuid.value);
-
-      let matches: MatchDisplay[] = rawMatches;
-      if (safeInfo.puuid && isCurrentPlayer) {
-        matches = mergeMatchesWithCache(safeInfo.puuid, rawMatches);
-      }
-
-      if (filterEnabled && currentQueueId.value !== null) {
-        matches = matches.filter(
-          (m: MatchDisplay) => m.queueId === currentQueueId.value,
-        );
-      }
-      matches = matches.slice(0, 10);
-
-      let solo: RankedQueueEntry | null = null,
-        flex: RankedQueueEntry | null = null;
-      if (rankedResp.success && rankedResp.data?.queues) {
-        solo =
-          rankedResp.data.queues.find(
-            (q) => q.queueType === "RANKED_SOLO_5x5",
-          ) || null;
-        flex =
-          rankedResp.data.queues.find(
-            (q) => q.queueType === "RANKED_FLEX_SR",
-          ) || null;
-      }
-
-      let avgKda: number | undefined = undefined;
-      let winRate: number | undefined = undefined;
-      let winCount: number | undefined = undefined;
-      let lossesCount: number | undefined = undefined;
-      {
-        const stats = computeMatchStats(matches);
-        avgKda = stats.avgKda;
-        winRate = stats.winRate;
-        winCount = stats.winCount;
-        lossesCount = stats.lossesCount;
-      }
-
-      const streak = computeStreak(matches);
-
-      let fateFlag: "ally" | "enemy" | null = null;
-      let recentlyChampionName = "";
-      if (currentSummonerId.value && matches.length > 0 && !isCurrentPlayer && safeInfo.puuid) {
-        try {
-          const lastGameId = matches[0].gameId;
-          const fateInfo = await fetchPlayerFateInfo(
-            lastGameId,
-            safeInfo.puuid,
-            currentSummonerId.value,
-          );
-          if (fateInfo) {
-            fateFlag = fateInfo.fateFlag;
-            recentlyChampionName = fateInfo.recentlyChampionName || "";
-          }
-        } catch (e) {
-          // 进行中 LCU match-history 不可用时宿命检测会失败，不影响身份与战绩列表展示
-          console.debug("宿命检测失败:", e);
-        }
-      }
-
-      const dataObj: PlayerData = {
-        info: safeInfo,
-        matches,
-        ranked: { solo, flex },
-        loading: false,
-        matchHistoryHidden,
-        championId: fallbackPlayer?.championId || fallbackPlayer?.botChampionId || 0,
-        avgKda,
-        winRate,
-        winCount,
-        lossesCount,
-        fateFlag,
-        recentlyChampionName,
-        masteries: masteryData,
-        streak,
-      };
-      gameInfo.setPlayer(dataObj, {
-        cellId,
-        summonerId,
-        puuid: safeInfo.puuid || undefined,
-      });
-      debouncedSavePlayerData();
-    } catch {
-      const existingInfo =
-        playerData.value[cellId]?.info ||
-        (summonerId ? playerData.value[summonerId]?.info : undefined) ||
-        (playerPuuid ? playerData.value[playerPuuid]?.info : undefined);
-      const dataObj: PlayerData = {
-        info: existingInfo || null,
-        matches: [],
-        ranked: { solo: null, flex: null },
-        loading: false,
-        matchHistoryHidden: true,
-        // 异常兜底也保留所选英雄，不留空白列
-        championId: resolveCarryChampionId(fallbackPlayer, cellId),
-      };
-      gameInfo.setPlayer(dataObj, {
-        cellId,
-        summonerId,
-        puuid: playerPuuid,
-      });
-    }
-  }
+  const loadPlayerData = createLoadPlayerData({
+    gameInfo,
+    store,
+    appConfig,
+    currentSummonerId,
+    currentSummonerPuuid,
+    currentQueueId,
+    onPlayerSaved: debouncedSavePlayerData,
+    resolveCarryChampionId,
+  });
 
   async function loadAllPlayers() {
     const my = myTeam.value;
