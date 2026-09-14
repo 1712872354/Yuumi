@@ -9,7 +9,7 @@ pub mod history;
 pub mod rank;
 
 pub use augments::get_tft_augments;
-pub use data::{fetch_tft_meta_maps, get_tft_data};
+pub use data::fetch_tft_meta_maps;
 pub use history::get_tft_match_history;
 pub use rank::get_tft_ranked_stats;
 

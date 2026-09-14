@@ -119,24 +119,18 @@ function extractRegistered(libText) {
 /** 从前端 ts/vue 提取 invoke("commandName")（支持嵌套泛型与跨行） */
 function extractFrontendInvokes(frontFiles) {
   const calls = new Map(); // name -> Set("file:line")
-  const callRe = /\binvoke\s*(?:<[^<>]*(?:<[^<>]*>[^<>]*)*>)?\s*\(/g;
+  // invoke 后可有多层跨行泛型，再 ( "cmd"
+  const re = /\binvoke\s*(?:<[\s\S]*?>)*\s*\(\s*["'`]([A-Za-z_][A-Za-z0-9_]*)["'`]/g;
   for (const file of frontFiles) {
+    if (file.includes("__tests__") || file.endsWith(".test.ts")) continue;
     const text = readFileSync(file, "utf8");
-    const lines = text.split(/\r?\n/);
-    for (let i = 0; i < lines.length; i++) {
-      callRe.lastIndex = 0;
-      if (!callRe.test(lines[i])) continue;
-      // 从本行 invoke( 之后向下最多扫 3 行，取第一个字符串
-      for (let j = i; j < Math.min(i + 4, lines.length); j++) {
-        const slice = j === i ? lines[i].slice(callRe.lastIndex) : lines[j];
-        const strM = slice.match(/["'`]([A-Za-z_][A-Za-z0-9_]*)["'`]/);
-        if (strM) {
-          const name = strM[1];
-          if (!calls.has(name)) calls.set(name, new Set());
-          calls.get(name).add(`${relative(ROOT, file).replace(/\\/g, "/")}:${j + 1}`);
-          break;
-        }
-      }
+    re.lastIndex = 0;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      const name = m[1];
+      const line = text.slice(0, m.index).split(/\r?\n/).length;
+      if (!calls.has(name)) calls.set(name, new Set());
+      calls.get(name).add(`${relative(ROOT, file).replace(/\\/g, "/")}:${line}`);
     }
   }
   return calls;

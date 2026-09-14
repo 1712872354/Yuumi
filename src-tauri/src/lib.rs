@@ -321,7 +321,6 @@ pub fn run() {
             parsers::match_parser::history::get_match_history_merged,
             parsers::match_parser::teammates::get_recent_teammates,
             parsers::game_info::get_player_fate_info,
-            parsers::tft::data::get_tft_data,
             parsers::tft::rank::get_tft_ranked_stats,
             parsers::tft::history::get_tft_match_history,
             parsers::tft::augments::get_tft_augments,

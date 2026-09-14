@@ -1,8 +1,5 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use tauri::State;
-
-use crate::AppState;
 
 use super::augments::{extract_augments_from_value, get_tft_augments_cache_path};
 use super::{
@@ -232,13 +229,6 @@ pub(crate) async fn fetch_tft_data_mapping(_lcu: Option<&crate::LcuClient>) -> T
         item_icons: HashMap::new(),
         item_names: HashMap::new(),
     }
-}
-
-/// 从 LCU 获取 TFT 数据资源
-#[tauri::command]
-pub async fn get_tft_data(app_state: State<'_, AppState>) -> Result<TftDataMapping, String> {
-    let _ = app_state.lcu().await?; // 仅确认 LCU 在线，不持锁（映射字典可能走 CDN 下载）
-    Ok(fetch_tft_data_mapping(None).await)
 }
 
 /// 构建归一化的 trait name 映射（从 TftDataMapping 提取，不含网络请求）
