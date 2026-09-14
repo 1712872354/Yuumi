@@ -182,7 +182,6 @@ function premadeDotStyle(group: { colorIdx: number }) {
         <header class="team-header">
           <span class="team-dot ally-dot"></span>
           <span class="team-title">{{ t("gameInfo.myTeam", { count: myTeam.length }) }}</span>
-          <span class="team-wr">胜率: {{ teamWinRate(myTeam, "ally") }}</span>
           <div v-if="myPremadeGroups.length" class="premade-chips">
             <div
               v-for="group in myPremadeGroups"
@@ -207,6 +206,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
               </div>
             </div>
           </div>
+          <span class="team-wr">胜率: {{ teamWinRate(myTeam, "ally") }}</span>
         </header>
 
         <div class="team-grid">
@@ -229,7 +229,6 @@ function premadeDotStyle(group: { colorIdx: number }) {
         <header class="team-header">
           <span class="team-dot enemy-dot"></span>
           <span class="team-title">{{ t("gameInfo.theirTeam", { count: theirTeam.length }) }}</span>
-          <span class="team-wr">胜率: {{ teamWinRate(theirTeam, "enemy") }}</span>
           <div v-if="theirPremadeGroups.length" class="premade-chips">
             <div
               v-for="group in theirPremadeGroups"
@@ -254,6 +253,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
               </div>
             </div>
           </div>
+          <span class="team-wr">胜率: {{ teamWinRate(theirTeam, "enemy") }}</span>
         </header>
 
         <div class="team-grid">
@@ -309,7 +309,7 @@ function premadeDotStyle(group: { colorIdx: number }) {
 .teams-board {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
   min-height: 0;
   flex: 1;
 }
@@ -317,14 +317,14 @@ function premadeDotStyle(group: { colorIdx: number }) {
 .team-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   min-height: 0;
 }
 
 .team-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -343,23 +343,24 @@ function premadeDotStyle(group: { colorIdx: number }) {
 }
 
 .team-title {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 800;
   color: var(--text-primary, #1f2937);
   letter-spacing: 0.02em;
 }
 
 .team-wr {
   font-size: 12px;
+  font-weight: 600;
   color: var(--text-dimmed, #6b7280);
-  margin-left: 4px;
+  margin-left: auto;
 }
 
 .premade-chips {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-left: auto;
+  margin-left: 8px;
 }
 
 .premade-chip {

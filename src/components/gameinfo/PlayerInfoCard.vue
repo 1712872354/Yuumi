@@ -36,7 +36,9 @@ const RANKED_MEDAL_MAP: Record<string, string> = {
 
 function getTierMedal(tier?: string | null): string | null {
   if (!tier) return null;
-  return RANKED_MEDAL_MAP[tier.toUpperCase()] || null;
+  const key = tier.toUpperCase();
+  if (key === "NONE" || key === "NA") return null;
+  return RANKED_MEDAL_MAP[key] || null;
 }
 
 const props = defineProps<{
@@ -47,35 +49,30 @@ const props = defineProps<{
   savedMap?: Record<string, SavedPlayerMarker>;
   selfPuuid?: string;
   index: number;
-  matchFilter?: string;
 }>();
 
 const { t } = useI18n();
 const { handleCareerClick } = usePlayerSearch();
 
-// ─── 英雄 ID ───
 const resolvedChampId = computed(() => {
-  // 优先从 player 自身取，兜底从 playerData 的 championId 取
   if (props.player.championId && props.player.championId > 0) return props.player.championId;
-  if ((props.player as Record<string, unknown>).botChampionId) return (props.player as Record<string, number>).botChampionId;
-  if (props.playerData?.championId && props.playerData.championId > 0) return props.playerData.championId;
-  // 召唤师头像兜底
-  if (props.playerData?.info?.profileIconId) return 0; // 0 表示无英雄，走头像兜底
+  const botChamp = (props.player as Record<string, number>).botChampionId;
+  if (botChamp && botChamp > 0) return botChamp;
+  if (props.playerData?.championId && props.playerData.championId > 0) {
+    return props.playerData.championId;
+  }
   return 0;
 });
 
-// ─── 召唤师信息 ───
 const summonerInfo = computed(() => props.playerData?.info);
 const displayName = computed(() => {
   if (summonerInfo.value?.gameName) return summonerInfo.value.gameName;
   if (summonerInfo.value?.displayName) return summonerInfo.value.displayName;
-  // 从 player 上兜底
   const p = props.player as Record<string, unknown>;
   return (p.gameName as string) || (p.displayName as string) || (p.summonerName as string) || "";
 });
 const tagLine = computed(() => summonerInfo.value?.tagLine || "");
 
-// ─── 段位 ───
 const soloRank = computed(() => props.playerData?.ranked?.solo ?? null);
 const flexRank = computed(() => props.playerData?.ranked?.flex ?? null);
 
@@ -93,11 +90,12 @@ const TIER_COLORS: Record<string, string> = {
 };
 
 function getTierColor(tier?: string): string {
-  if (!tier) return "var(--text-dimmed)";
-  return TIER_COLORS[tier.toUpperCase()] || "var(--text-dimmed)";
+  if (!tier) return "var(--text-dimmed, #6b7280)";
+  const key = tier.toUpperCase();
+  if (key === "NONE" || key === "NA") return "var(--text-dimmed, #6b7280)";
+  return TIER_COLORS[key] || "var(--text-dimmed, #6b7280)";
 }
 
-// 短段位名（两字），对齐 LeagueAkari 风格
 const SHORT_TIER_NAMES: Record<string, string> = {
   IRON: "黑铁",
   BRONZE: "黄铜",
@@ -111,339 +109,265 @@ const SHORT_TIER_NAMES: Record<string, string> = {
   CHALLENGER: "王者",
 };
 
-function formatTierShort(entry: { tier: string; rank: string; leaguePoints?: number } | null): string {
-  if (!entry || !entry.tier || entry.tier === "NA" || entry.tier === "NONE") return t("gameInfo.unranked");
+function formatTierShort(
+  entry: { tier: string; rank: string; leaguePoints?: number } | null,
+): string {
+  if (!entry || !entry.tier || entry.tier === "NA" || entry.tier === "NONE") {
+    return t("gameInfo.unranked");
+  }
   const tierKey = entry.tier.toUpperCase();
   const tierName = SHORT_TIER_NAMES[tierKey] || t(`tools.spoofTier.${tierKey}`);
   const highTier = ["MASTER", "GRANDMASTER", "CHALLENGER"].includes(tierKey);
   const lp = entry.leaguePoints !== undefined ? ` ${entry.leaguePoints}` : "";
   if (highTier) return `${tierName}${lp}`;
   if (!entry.rank || entry.rank === "NA") return `${tierName}${lp}`;
-  return `${tierName} ${entry.rank}${lp}`;
+  return `${tierName}${entry.rank}${lp}`;
 }
 
-// 主段位（用于边框色）：优先单双，次选灵活
 const primaryTier = computed(() => {
-  if (soloRank.value?.tier) return soloRank.value.tier;
-  if (flexRank.value?.tier) return flexRank.value.tier;
+  if (soloRank.value?.tier && soloRank.value.tier !== "NONE") return soloRank.value.tier;
+  if (flexRank.value?.tier && flexRank.value.tier !== "NONE") return flexRank.value.tier;
   return "";
 });
 
-// ─── 组队颜色 ───
 const premadeColor = computed(() => {
   if (props.premadeIdx === undefined || props.premadeIdx < 0) return null;
-  const idx = props.premadeIdx % PREMADE_COLORS.length;
-  return PREMADE_COLORS[idx];
+  return PREMADE_COLORS[props.premadeIdx % PREMADE_COLORS.length];
 });
 
-// ─── 统计：胜率 / KDA / 位置 ───
+const winCount = computed(() => props.playerData?.winCount ?? 0);
+const lossCount = computed(() => props.playerData?.lossesCount ?? 0);
+const totalGames = computed(() => winCount.value + lossCount.value);
 const winRate = computed(() => props.playerData?.winRate);
 const avgKda = computed(() => props.playerData?.avgKda);
-const totalGames = computed(() => {
-  const w = props.playerData?.winCount ?? 0;
-  const l = props.playerData?.lossesCount ?? 0;
-  return w + l;
+
+function getWinRateClass(rate: number | undefined): string {
+  if (rate === undefined) return "stat-dim";
+  if (rate >= 53) return "stat-win";
+  if (rate <= 47) return "stat-loss";
+  return "stat-normal";
+}
+
+function getKdaClass(kda: number | undefined): string {
+  if (kda === undefined) return "stat-dim";
+  if (kda >= 3) return "stat-win";
+  if (kda < 2) return "stat-loss";
+  return "stat-normal";
+}
+
+const streakBadge = computed(() => {
+  const s = props.playerData?.streak;
+  if (!s || s.count < 2) return null;
+  return s.type === "win"
+    ? { text: `${s.count}连胜`, cls: "badge-win" }
+    : { text: `${s.count}连败`, cls: "badge-loss" };
 });
 
-function getWinRateColorClass(rate: number | undefined): string {
-  if (rate === undefined) return "text-dimmed";
-  if (rate >= 53) return "text-win";
-  if (rate <= 47) return "text-loss";
-  return "text-normal";
-}
-
-function getKdaColorClass(kda: number | undefined): string {
-  if (kda === undefined) return "text-dimmed";
-  if (kda >= 3) return "text-win";
-  if (kda < 2) return "text-loss";
-  return "text-normal";
-}
-
-// ─── 标签列表 ───
-interface CardTag {
-  text: string;
-  class: string; // CSS class 名
-  bgColor?: string;
-  textColor?: string;
-}
-
-const cardTags = computed<CardTag[]>(() => {
-  const tags: CardTag[] = [];
+const cardTags = computed(() => {
+  const tags: { text: string; cls: string; bg?: string; color?: string }[] = [];
   const data = props.playerData;
   if (!data) return tags;
 
-  // 1. 自己
   if (props.selfPuuid && data.info?.puuid && data.info.puuid === props.selfPuuid) {
-    tags.push({ text: t("gameInfo.tagSelf"), class: "tag-self" });
+    tags.push({ text: t("gameInfo.tagSelf"), cls: "tag-self" });
   }
-
-  // 2. 已标记
   const puuid = data.info?.puuid;
   if (puuid && props.savedMap?.[puuid]) {
-    tags.push({ text: t("gameInfo.tagMarked"), class: "tag-marked" });
+    tags.push({ text: t("gameInfo.tagMarked"), cls: "tag-marked" });
   }
-
-  // 3. 宿命对局
   if (data.fateFlag === "ally") {
-    tags.push({ text: t("gameInfo.tagFateAlly"), class: "tag-fate-ally" });
+    tags.push({ text: t("gameInfo.tagFateAlly"), cls: "tag-fate-ally" });
   } else if (data.fateFlag === "enemy") {
-    tags.push({ text: t("gameInfo.tagFateEnemy"), class: "tag-fate-enemy" });
+    tags.push({ text: t("gameInfo.tagFateEnemy"), cls: "tag-fate-enemy" });
   }
-
-  // 4. 组队
   if (props.premadeIdx !== undefined && props.premadeIdx >= 0 && premadeColor.value) {
-    // 计算组内人数：通过 premadeIdx 反推（这里简化显示"组"）
     tags.push({
       text: t("gameInfo.tagPremade", { size: "组" }),
-      class: "tag-premade",
-      bgColor: premadeColor.value.dot,
-      textColor: "#fff",
+      cls: "tag-premade",
+      bg: premadeColor.value.dot,
+      color: "#fff",
     });
   }
-
-  // 5. 连胜 / 连败
-  if (data.streak) {
-    if (data.streak.type === "win" && data.streak.count >= 2) {
-      tags.push({ text: t("gameInfo.tagWinStreak", { count: data.streak.count }), class: "tag-streak-win" });
-    } else if (data.streak.type === "loss" && data.streak.count >= 2) {
-      tags.push({ text: t("gameInfo.tagLoseStreak", { count: data.streak.count }), class: "tag-streak-loss" });
-    }
-  }
-
-  // 6. 高胜率
   if (data.winRate !== undefined && data.winRate >= 55 && totalGames.value >= 10) {
-    tags.push({ text: t("gameInfo.tagHighWinRate"), class: "tag-high-wr" });
+    tags.push({ text: t("gameInfo.tagHighWinRate"), cls: "tag-high-wr" });
   }
-
   return tags;
 });
 
-// ─── 擅长英雄（前 9 个） ───
 const topMasteries = computed(() => {
   if (!props.playerData?.masteries) return [];
   return props.playerData.masteries.slice(0, 9);
 });
 
-// ─── 战绩列表 ───
 const matches = computed(() => {
   if (!props.playerData?.matches) return [];
   return props.playerData.matches;
 });
 
-// ─── 战绩隐藏 ───
 const isMatchHidden = computed(() => props.playerData?.matchHistoryHidden === true);
-
-// ─── 加载中 ───
 const isLoading = computed(() => props.playerData?.loading === true);
 
-// ─── 格式化时间（用 MatchDisplay.time 字段） ───
-function formatMatchTime(timeStr: string): string {
-  // time 字段通常是 "X分钟前" / "X小时前" / "X天前" 等已格式化字符串
-  return timeStr || "";
-}
-
-// ─── 点击召唤师名 ───
 function onSummonerClick(e: MouseEvent) {
   if (!summonerInfo.value) return;
-  const player = {
-    gameName: summonerInfo.value.gameName,
-    tagLine: summonerInfo.value.tagLine,
-    puuid: summonerInfo.value.puuid,
-    summonerId: summonerInfo.value.summonerId,
-  };
-  handleCareerClick(e, player, props.playerData);
+  handleCareerClick(
+    e,
+    {
+      displayName: displayName.value,
+      tagLine: summonerInfo.value.tagLine,
+      puuid: summonerInfo.value.puuid,
+    },
+    props.playerData,
+  );
+}
+
+function copyName(e: MouseEvent) {
+  e.stopPropagation();
+  const text = tagLine.value ? `${displayName.value}#${tagLine.value}` : displayName.value;
+  if (!text) return;
+  navigator.clipboard?.writeText(text).catch(() => {});
 }
 </script>
 
 <template>
   <div
-    class="player-info-card-v2"
+    class="pic"
     :class="side"
     :style="{
       borderColor: premadeColor?.border || getTierColor(primaryTier || undefined),
     }"
   >
-    <!-- 组队三角装饰 -->
     <div
       v-if="premadeColor"
-      class="premade-triangle"
+      class="premade-corner"
       :style="{ backgroundColor: premadeColor.dot }"
     ></div>
 
-    <!-- ─── 区域 1：头部 ─── -->
-    <div class="card-header">
-      <!-- 头像 -->
+    <!-- 头部：头像 + 名字 + 段位 -->
+    <div class="pic-header">
       <div class="avatar-wrap" @click="onSummonerClick">
-        <div class="avatar-ring">
-          <LcuImage
-            v-if="resolvedChampId > 0"
-            :src="getChampionIcon(resolvedChampId)"
-            class="avatar-img"
-          />
-          <div v-else class="avatar-img avatar-placeholder">?</div>
-        </div>
-        <div v-if="summonerInfo?.summonerLevel" class="level-badge">
-          {{ summonerInfo.summonerLevel }}
-        </div>
-        <img
-          v-if="getTierMedal(primaryTier)"
-          :src="getTierMedal(primaryTier)!"
-          class="tier-medal"
-          :alt="primaryTier"
+        <LcuImage
+          v-if="resolvedChampId > 0"
+          :src="getChampionIcon(resolvedChampId)"
+          class="avatar-img"
         />
+        <LcuImage
+          v-else-if="summonerInfo?.profileIconId"
+          :src="`/lol-game-data/assets/v1/profile-icons/${summonerInfo.profileIconId}.jpg`"
+          class="avatar-img"
+        />
+        <div v-else class="avatar-img avatar-ph">?</div>
+        <span v-if="summonerInfo?.summonerLevel" class="lvl">{{ summonerInfo.summonerLevel }}</span>
       </div>
 
-      <!-- 信息区 -->
-      <div class="header-info">
-        <!-- 名字行 -->
+      <div class="head-meta">
         <div class="name-row">
-          <span
-            class="summoner-name"
-            :style="{ color: premadeColor?.dot || '' }"
-            @click="onSummonerClick"
-          >
-            {{ displayName || '—' }}
+          <span class="pname" :style="{ color: premadeColor?.dot || '' }" @click="onSummonerClick">
+            {{ displayName || "—" }}
           </span>
-          <span v-if="tagLine" class="tag-line">#{{ tagLine }}</span>
+          <span v-if="tagLine" class="ptag">#{{ tagLine }}</span>
+          <button class="copy-btn" :title="'复制'" @click="copyName">
+            <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="9" y="9" width="13" height="13" rx="2" />
+              <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+            </svg>
+          </button>
         </div>
 
-        <!-- 段位区（单行：单双 + 灵活左右并排） -->
-        <div class="tier-row">
-          <!-- 单双 -->
-          <div
-            class="tier-item"
-            :style="{ color: getTierColor(soloRank?.tier) }"
-            :title="soloRank ? formatTierShort(soloRank) : t('gameInfo.soloRank') + ' ' + t('gameInfo.unranked')"
-          >
-            <img
-              v-if="getTierMedal(soloRank?.tier)"
-              :src="getTierMedal(soloRank?.tier)!"
-              class="tier-item-icon"
-              alt=""
-            />
-            <span class="tier-item-text">
-              {{ soloRank ? formatTierShort(soloRank) : t("gameInfo.unranked") }}
-            </span>
+        <div class="rank-row">
+          <div class="rank-item" :style="{ color: getTierColor(soloRank?.tier) }">
+            <img v-if="getTierMedal(soloRank?.tier)" :src="getTierMedal(soloRank?.tier)!" class="rank-medal" alt="" />
+            <span class="rank-label">{{ $t("gameInfo.soloRank") }}:</span>
+            <span class="rank-val">{{ formatTierShort(soloRank) }}</span>
           </div>
-          <!-- 灵活 -->
-          <div
-            class="tier-item tier-item-flex"
-            :style="{ color: getTierColor(flexRank?.tier) }"
-            :title="flexRank ? formatTierShort(flexRank) : t('gameInfo.flexRank') + ' ' + t('gameInfo.unranked')"
-          >
-            <img
-              v-if="getTierMedal(flexRank?.tier)"
-              :src="getTierMedal(flexRank?.tier)!"
-              class="tier-item-icon"
-              alt=""
-            />
-            <span class="tier-item-text tier-item-text-flex">
-              {{ flexRank ? formatTierShort(flexRank) : t("gameInfo.unranked") }}
-            </span>
+          <div class="rank-item" :style="{ color: getTierColor(flexRank?.tier) }">
+            <img v-if="getTierMedal(flexRank?.tier)" :src="getTierMedal(flexRank?.tier)!" class="rank-medal" alt="" />
+            <span class="rank-label">{{ $t("gameInfo.flexRank") }}:</span>
+            <span class="rank-val">{{ formatTierShort(flexRank) }}</span>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ─── 区域 2：统计区（三等分） ─── -->
-    <div class="card-stats">
-      <div class="stat-col">
-        <span class="stat-value" :class="getWinRateColorClass(winRate)">
-          {{ winRate !== undefined ? `${winRate}%` : '—' }}
-        </span>
-        <span class="stat-label">{{ t("gameInfo.teamWinRate") }}</span>
-      </div>
-      <div class="stat-col">
-        <span class="stat-value" :class="getKdaColorClass(avgKda)">
-          {{ avgKda !== undefined ? avgKda.toFixed(2) : '—' }}
-        </span>
-        <span class="stat-label">{{ t("career.kda") }}</span>
-      </div>
-      <div class="stat-col">
-        <span class="stat-value text-dimmed">—</span>
-        <span class="stat-label">{{ t("gameInfo.position") }}</span>
-      </div>
-    </div>
-
-    <!-- ─── 区域 3：标签区 ─── -->
-    <div v-if="cardTags.length" class="card-tags">
-      <span
-        v-for="(tag, i) in cardTags"
-        :key="i"
-        class="card-tag"
-        :class="tag.class"
-        :style="{
-          backgroundColor: tag.bgColor || '',
-          color: tag.textColor || '',
-        }"
-      >
-        {{ tag.text }}
-      </span>
-    </div>
-
-    <!-- ─── 区域 4：擅长英雄 ─── -->
-    <div v-if="topMasteries.length" class="card-mastery">
+    <!-- 擅长英雄 -->
+    <div v-if="topMasteries.length" class="mastery-row">
+      <span class="mastery-label">{{ $t("gameInfo.mastery", "擅长") }}:</span>
       <div
         v-for="m in topMasteries"
         :key="m.championId"
         class="mastery-icon-wrap"
         :title="`${m.championPoints.toLocaleString()} 点`"
       >
-        <LcuImage
-          :src="getChampionIcon(m.championId)"
-          class="mastery-icon"
-        />
-        <span v-if="m.championLevel >= 5" class="mastery-star">★</span>
+        <LcuImage :src="getChampionIcon(m.championId)" class="mastery-icon" />
+        <span v-if="m.championLevel >= 7" class="mastery-star">★</span>
       </div>
     </div>
 
-    <!-- ─── 区域 5：战绩列表 ─── -->
-    <div class="card-matches">
-      <template v-if="isLoading">
-        <div class="match-empty">
-          <div class="loading-spinner"></div>
-          <span>{{ t("career.loading") }}</span>
-        </div>
-      </template>
+    <!-- 统计区：内联 标签:值 -->
+    <div class="stats-block">
+      <div class="stats-line">
+        <span class="si">
+          <span class="si-l">{{ $t("gameInfo.wins", "胜场") }}:</span>
+          <span class="si-v">{{ winCount }}/{{ totalGames || "—" }}</span>
+        </span>
+        <span class="si">
+          <span class="si-l">{{ $t("gameInfo.teamWinRate") }}:</span>
+          <span class="si-v" :class="getWinRateClass(winRate)">
+            {{ winRate !== undefined ? `${winRate}%` : "—" }}
+          </span>
+        </span>
+        <span v-if="streakBadge" class="streak" :class="streakBadge.cls">{{ streakBadge.text }}</span>
+      </div>
+      <div class="stats-line">
+        <span class="si">
+          <span class="si-l">KDA:</span>
+          <span class="si-v" :class="getKdaClass(avgKda)">
+            {{ avgKda !== undefined ? avgKda.toFixed(1) : "—" }}
+          </span>
+        </span>
+      </div>
+      <div v-if="cardTags.length" class="tag-row">
+        <span
+          v-for="(tag, i) in cardTags"
+          :key="i"
+          class="tag"
+          :class="tag.cls"
+          :style="{ backgroundColor: tag.bg || '', color: tag.color || '' }"
+        >
+          {{ tag.text }}
+        </span>
+      </div>
+    </div>
 
-      <template v-else-if="isMatchHidden">
-        <div class="match-empty">
-          <span class="hidden-icon">🔒</span>
-          <span>战绩已隐藏</span>
-        </div>
-      </template>
-
-      <template v-else-if="matches.length === 0">
-        <div class="match-empty">
-          <span>{{ t("career.empty") }}</span>
-        </div>
-      </template>
-
+    <!-- 战绩列表 -->
+    <div class="matches">
+      <div v-if="isLoading" class="empty">
+        <span class="spinner"></span>
+        <span>{{ $t("career.loading") }}</span>
+      </div>
+      <div v-else-if="isMatchHidden" class="empty">🔒 {{ $t("gameInfo.matchHidden", "战绩已隐藏") }}</div>
+      <div v-else-if="matches.length === 0" class="empty">{{ $t("career.empty") }}</div>
       <template v-else>
         <div
           v-for="match in matches"
           :key="match.gameId"
-          class="match-item"
+          class="mi"
           :class="{
-            'match-win': match.win === true,
-            'match-loss': match.win === false,
-            'match-remake': match.win === null || match.remake,
+            'mi-win': match.win === true,
+            'mi-loss': match.win === false,
+            'mi-remake': match.win === null || match.remake,
           }"
         >
-          <LcuImage
-            :src="getChampionIcon(match.championId)"
-            class="match-champ"
-          />
-          <div class="match-info">
-            <span class="match-mode">{{ match.name || '' }}</span>
-            <span class="match-time">{{ formatMatchTime(match.shortTime || match.time) }}</span>
+          <LcuImage :src="getChampionIcon(match.championId)" class="mi-champ" />
+          <div class="mi-mid">
+            <span class="mi-mode">{{ match.name || "" }}</span>
+            <span class="mi-time">{{ match.shortTime || match.time }}</span>
           </div>
-          <div class="match-kda">
-            <span class="kda-kill">{{ match.kills }}</span>
-            <span class="kda-slash">/</span>
-            <span class="kda-death">{{ match.deaths }}</span>
-            <span class="kda-slash">/</span>
-            <span class="kda-assist">{{ match.assists }}</span>
+          <div class="mi-kda">
+            <span class="k">{{ match.kills }}</span>
+            <span class="s">/</span>
+            <span class="d">{{ match.deaths }}</span>
+            <span class="s">/</span>
+            <span class="a">{{ match.assists }}</span>
           </div>
         </div>
       </template>
@@ -452,250 +376,299 @@ function onSummonerClick(e: MouseEvent) {
 </template>
 
 <style scoped>
-.player-info-card-v2 {
+.pic {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 8px;
-  border-width: 2px;
-  border-style: solid;
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  transition: transform 0.2s ease, box-shadow 0.2s ease, filter 0.2s ease;
+  gap: 4px;
+  padding: 7px 8px 6px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
   overflow: hidden;
   min-height: 0;
+  transition: filter 0.15s ease, box-shadow 0.15s ease;
 }
-
-.player-info-card-v2:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+.pic:hover {
   filter: brightness(1.03);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+}
+.pic.ally {
+  background: rgba(59, 130, 246, 0.05);
+}
+.pic.enemy {
+  background: rgba(244, 63, 94, 0.05);
 }
 
-.player-info-card-v2.ally {
-  background: rgba(59, 130, 246, 0.06);
-}
-.player-info-card-v2.enemy {
-  background: rgba(244, 63, 94, 0.06);
-}
-
-/* 组队三角装饰 */
-.premade-triangle {
+.premade-corner {
   position: absolute;
   top: 0;
   right: 0;
-  width: 18px;
-  height: 18px;
-  transform: translateX(50%) translateY(-50%) rotate(45deg);
+  width: 14px;
+  height: 14px;
+  transform: translate(50%, -50%) rotate(45deg);
   z-index: 1;
-  box-shadow: -1px 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 /* ─── 头部 ─── */
-.card-header {
+.pic-header {
   display: flex;
-  gap: 8px;
-  align-items: stretch;
+  gap: 7px;
   flex-shrink: 0;
 }
-
 .avatar-wrap {
   position: relative;
-  cursor: pointer;
   flex-shrink: 0;
-}
-.avatar-ring {
-  width: 46px;
-  height: 46px;
-  border-radius: 50%;
-  padding: 2px;
-  background: rgba(255, 255, 255, 0.4);
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
-  transition: filter 0.15s ease;
-}
-.avatar-wrap:hover .avatar-ring {
-  filter: brightness(1.1);
+  cursor: pointer;
+  width: 42px;
+  height: 42px;
 }
 .avatar-img {
-  width: 100%;
-  height: 100%;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   object-fit: cover;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.08);
   display: block;
 }
-.avatar-placeholder {
+.avatar-ph {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-card, rgba(255, 255, 255, 0.3));
+  background: rgba(0, 0, 0, 0.08);
   color: var(--text-dimmed);
-  font-size: 14px;
   font-weight: 800;
+  font-size: 14px;
 }
-.level-badge {
+.lvl {
   position: absolute;
-  right: -2px;
+  right: -3px;
   bottom: -2px;
-  min-width: 18px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.65);
+  min-width: 16px;
+  padding: 0 3px;
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.7);
   color: #fff;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 14px;
   text-align: center;
-  white-space: nowrap;
 }
 
-.tier-medal {
-  position: absolute;
-  left: -4px;
-  bottom: -6px;
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-  filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.4));
-  pointer-events: none;
-}
-
-.header-info {
+.head-meta {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 3px;
+  gap: 2px;
 }
 
 .name-row {
   display: flex;
-  align-items: baseline;
-  gap: 4px;
+  align-items: center;
+  gap: 3px;
   min-width: 0;
 }
-.summoner-name {
-  font-size: 13px;
+.pname {
+  font-size: 12.5px;
   font-weight: 800;
-  color: var(--text-color);
+  color: var(--text-color, #111827);
   cursor: pointer;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  transition: filter 0.15s ease;
+  max-width: 70%;
 }
-.summoner-name:hover {
+.pname:hover {
   filter: brightness(1.2);
 }
-.tag-line {
-  font-size: 11px;
-  color: var(--text-dimmed);
+.ptag {
+  font-size: 10px;
+  color: var(--text-dimmed, #9ca3af);
   flex-shrink: 0;
 }
-
-/* ─── 段位区（两行） ─── */
-/* ─── 段位区（单行左右并排） ─── */
-.tier-row {
+.copy-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: transparent;
+  color: var(--text-dimmed, #9ca3af);
+  cursor: pointer;
   display: flex;
   align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  padding: 0;
+}
+.copy-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+  color: var(--text-color);
+}
+
+.rank-row {
+  display: flex;
   gap: 6px;
   min-width: 0;
 }
-.tier-item {
+.rank-item {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
+  font-size: 10.5px;
   overflow: hidden;
+  white-space: nowrap;
 }
-.tier-item-icon {
-  flex-shrink: 0;
-  width: 14px;
-  height: 14px;
+.rank-medal {
+  width: 13px;
+  height: 13px;
   object-fit: contain;
+  flex-shrink: 0;
 }
-.tier-item-text {
-  font-size: 11px;
-  font-weight: 600;
+.rank-label {
+  color: var(--text-dimmed, #9ca3af);
+  flex-shrink: 0;
+}
+.rank-val {
+  font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: 0.2px;
-}
-.tier-item-text-flex {
-  opacity: 0.85;
 }
 
-/* ─── 统计区 ─── */
-.card-stats {
+/* ─── 擅长 ─── */
+.mastery-row {
   display: flex;
   align-items: center;
+  gap: 3px;
   flex-shrink: 0;
-  padding: 4px 0;
-  border-top: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
-  border-bottom: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
+  flex-wrap: wrap;
 }
-.stat-col {
-  flex: 1;
+.mastery-label {
+  font-size: 10px;
+  color: var(--text-dimmed, #9ca3af);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.mastery-icon-wrap {
+  position: relative;
+  width: 18px;
+  height: 18px;
+}
+.mastery-icon {
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  object-fit: cover;
+  display: block;
+}
+.mastery-star {
+  position: absolute;
+  right: -2px;
+  bottom: -3px;
+  font-size: 8px;
+  color: #facc15;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+  line-height: 1;
+}
+
+/* ─── 统计 ─── */
+.stats-block {
   display: flex;
   flex-direction: column;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 3px 0;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+.stats-line {
+  display: flex;
   align-items: center;
-  gap: 1px;
-  line-height: 1.2;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  line-height: 1.35;
 }
-.stat-value {
-  font-size: 13px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
+.si {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  white-space: nowrap;
 }
-.stat-label {
-  font-size: 9px;
-  color: var(--text-dimmed);
+.si-l {
+  color: var(--text-dimmed, #9ca3af);
   font-weight: 500;
 }
-.text-win {
+.si-v {
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-color, #111827);
+}
+.stat-win {
   color: #059669;
 }
-.text-loss {
+.stat-loss {
   color: #dc2626;
 }
-.text-normal {
-  color: var(--text-color);
+.stat-normal {
+  color: var(--text-color, #111827);
 }
-.text-dimmed {
-  color: var(--text-dimmed);
+.stat-dim {
+  color: var(--text-dimmed, #9ca3af);
 }
 
-/* ─── 标签区 ─── */
-.card-tags {
+.streak {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  margin-left: auto;
+}
+.badge-win {
+  background: rgba(5, 150, 105, 0.15);
+  color: #059669;
+}
+.badge-loss {
+  background: rgba(220, 38, 38, 0.15);
+  color: #dc2626;
+}
+
+.tag-row {
   display: flex;
   flex-wrap: wrap;
   gap: 3px;
-  flex-shrink: 0;
+  margin-top: 1px;
 }
-.card-tag {
+.tag {
   display: inline-flex;
   align-items: center;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1.5;
-  white-space: nowrap;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1.55;
+  background: rgba(0, 0, 0, 0.06);
+  color: var(--text-color);
 }
 .tag-self {
-  background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.18);
+  color: #2563eb;
 }
 .tag-marked {
-  background: rgba(5, 150, 105, 0.15);
-  color: #059669;
+  background: rgba(168, 85, 247, 0.18);
+  color: #9333ea;
 }
 .tag-fate-ally {
   background: rgba(5, 150, 105, 0.15);
@@ -705,173 +678,116 @@ function onSummonerClick(e: MouseEvent) {
   background: rgba(220, 38, 38, 0.12);
   color: #dc2626;
 }
-.tag-premade {
-  color: #fff;
-}
-.tag-streak-win {
-  background: rgba(245, 158, 11, 0.15);
+.tag-high-wr {
+  background: rgba(245, 158, 11, 0.18);
   color: #d97706;
 }
-.tag-streak-loss {
-  background: rgba(220, 38, 38, 0.12);
-  color: #dc2626;
-}
-.tag-high-wr {
-  background: rgba(5, 150, 105, 0.15);
-  color: #059669;
-}
 
-/* ─── 擅长英雄 ─── */
-.card-mastery {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 3px;
-  flex-shrink: 0;
-}
-.mastery-icon-wrap {
-  position: relative;
-  width: 22px;
-  height: 22px;
-  border-radius: 3px;
-  overflow: hidden;
-  cursor: default;
-}
-.mastery-icon {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.mastery-star {
-  position: absolute;
-  right: -1px;
-  bottom: -2px;
-  font-size: 10px;
-  color: #facc15;
-  text-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
-  line-height: 1;
-}
-
-/* ─── 战绩列表 ─── */
-.card-matches {
+/* ─── 战绩 ─── */
+.matches {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding-right: 2px;
+  gap: 2px;
 }
-.card-matches::-webkit-scrollbar {
-  width: 4px;
+.matches::-webkit-scrollbar {
+  width: 3px;
 }
-.card-matches::-webkit-scrollbar-track {
-  background: transparent;
-}
-.card-matches::-webkit-scrollbar-thumb {
+.matches::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.15);
   border-radius: 2px;
 }
 
-.match-item {
+.empty {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  height: 32px;
-  padding: 3px 6px;
-  border-radius: 4px;
-  border-left: 3px solid transparent;
-  flex-shrink: 0;
-  transition: filter 0.15s ease;
+  font-size: 11px;
+  color: var(--text-dimmed, #9ca3af);
 }
-.match-item:hover {
-  filter: brightness(1.05);
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(0, 0, 0, 0.1);
+  border-top-color: #3b82f6;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
 }
-.match-win {
-  background: rgba(59, 130, 246, 0.14);
-  border-left-color: #3b82f6;
-  border-left-width: 3px;
-}
-.match-loss {
-  background: rgba(220, 38, 38, 0.18);
-  border-left-color: #dc2626;
-  border-left-width: 3px;
-}
-.match-remake {
-  background: rgba(156, 163, 175, 0.15);
-  border-left-color: #9ca3af;
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
-.match-champ {
-  width: 24px;
-  height: 24px;
+.mi {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 2px 5px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.mi-win {
+  background: rgba(59, 130, 246, 0.13);
+}
+.mi-loss {
+  background: rgba(220, 38, 38, 0.16);
+}
+.mi-remake {
+  background: rgba(156, 163, 175, 0.14);
+}
+
+.mi-champ {
+  width: 22px;
+  height: 22px;
   border-radius: 3px;
   object-fit: cover;
   flex-shrink: 0;
 }
-.match-info {
+.mi-mid {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 1px;
-  line-height: 1.2;
+  line-height: 1.15;
 }
-.match-mode {
-  font-size: 11px;
+.mi-mode {
+  font-size: 10.5px;
   font-weight: 600;
-  color: var(--text-color);
+  color: var(--text-color, #111827);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.match-time {
-  font-size: 10px;
-  color: var(--text-dimmed);
+.mi-time {
+  font-size: 9.5px;
+  color: var(--text-dimmed, #9ca3af);
 }
-.match-kda {
-  font-size: 11px;
-  font-weight: 600;
+.mi-kda {
+  font-size: 10.5px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: var(--text-color);
   flex-shrink: 0;
-  line-height: 1.2;
   text-align: right;
+  white-space: nowrap;
 }
-.kda-kill { color: var(--text-color); }
-.kda-death { color: #ef4444; }
-.kda-assist { color: var(--text-color); }
-.kda-slash {
-  color: var(--text-dimmed);
+.mi-kda .k {
+  color: var(--text-color, #111827);
+}
+.mi-kda .d {
+  color: #ef4444;
+}
+.mi-kda .a {
+  color: var(--text-color, #111827);
+}
+.mi-kda .s {
+  color: var(--text-dimmed, #9ca3af);
   margin: 0 1px;
-}
-
-/* 空状态 */
-.match-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: var(--text-dimmed);
-  font-size: 11px;
-}
-.hidden-icon {
-  font-size: 18px;
-}
-
-/* loading spinner */
-.loading-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid rgba(0, 0, 0, 0.1);
-  border-top-color: var(--primary-color, #3b82f6);
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 </style>
