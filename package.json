@@ -15,7 +15,8 @@
     "test:rust": "cd src-tauri && cargo test",
     "lint": "eslint src --ext .ts,.vue",
     "lint:fix": "eslint src --ext .ts,.vue --fix",
-    "check-all": "pnpm run format && pnpm type-check && pnpm lint && pnpm fmt-check && pnpm clippy",
+    "test:unit": "vitest run",
+    "check-all": "pnpm run format && pnpm type-check && pnpm lint && pnpm test:unit && pnpm fmt-check && pnpm clippy",
     "prepare": "husky"
   },
   "dependencies": {
