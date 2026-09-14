@@ -16,7 +16,10 @@ export interface CherryAugmentDetail {
 export interface RankedQueueEntry {
   queueType: string;
   tier: string;
+  /** 小段（I/II/III/IV）；部分 LCU 版本放在 division */
   rank: string;
+  /** 部分 LCU 版本使用 division 字段表示小段 */
+  division?: string;
   leaguePoints?: number;
   wins: number;
   losses: number;

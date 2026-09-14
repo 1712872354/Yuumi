@@ -274,7 +274,8 @@ export function useMatchHistory() {
   function formatRank(queue: RankDisplaySource | null) {
     if (!queue || !queue.tier || queue.tier === "NONE") return "--";
     const tierCn = TIER_MAP[queue.tier] || queue.tier;
-    const division = !queue.rank || queue.rank === "NA" ? "" : " " + queue.rank;
+    const raw = queue.rank && queue.rank !== "NA" ? queue.rank : queue.division;
+    const division = !raw || raw === "NA" ? "" : " " + raw;
     return `${tierCn}${division}`;
   }
 

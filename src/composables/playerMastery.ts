@@ -84,7 +84,7 @@ export async function fetchPlayerMastery(
   return [];
 }
 
-/** 按 puuid 拉取排位数据（带 5 分钟缓存） */
+/** 按 puuid 拉取排位数据（带 5 分钟缓存）。统一把 division 归一到 rank。 */
 export async function fetchRankedStatsCached(
   puuid: string,
 ): Promise<LcuApiResponse<RankedStats>> {
@@ -98,7 +98,20 @@ export async function fetchRankedStatsCached(
       `/lol-ranked/v1/ranked-stats/${puuid}`,
     );
     if (rResp.success && rResp.data) {
-      rankCache.set(puuid, rResp.data);
+      const data: RankedStats = {
+        ...rResp.data,
+        queues: (rResp.data.queues || []).map((q) => {
+          const rank =
+            q.rank && q.rank !== "NA" && q.rank !== ""
+              ? q.rank
+              : q.division && q.division !== "NA"
+                ? q.division
+                : q.rank;
+          return { ...q, rank };
+        }),
+      };
+      rankCache.set(puuid, data);
+      return { success: true, data };
     }
     return rResp;
   } catch {

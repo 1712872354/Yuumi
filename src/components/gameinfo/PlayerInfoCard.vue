@@ -141,7 +141,12 @@ const SHORT_TIER_NAMES: Record<string, string> = {
 };
 
 function formatTierShort(
-  entry: { tier: string; rank: string; leaguePoints?: number } | null,
+  entry: {
+    tier: string;
+    rank: string;
+    division?: string;
+    leaguePoints?: number;
+  } | null,
 ): string {
   if (!entry || !entry.tier || entry.tier === "NA" || entry.tier === "NONE") {
     return t("gameInfo.unranked");
@@ -151,8 +156,15 @@ function formatTierShort(
   const highTier = ["MASTER", "GRANDMASTER", "CHALLENGER"].includes(tierKey);
   const lp = entry.leaguePoints !== undefined ? ` ${entry.leaguePoints}` : "";
   if (highTier) return `${tierName}${lp}`;
-  if (!entry.rank || entry.rank === "NA") return `${tierName}${lp}`;
-  return `${tierName}${entry.rank}${lp}`;
+  // LCU 不同版本可能把小段放在 rank 或 division
+  const div =
+    entry.rank && entry.rank !== "NA"
+      ? entry.rank
+      : entry.division && entry.division !== "NA"
+        ? entry.division
+        : "";
+  if (!div) return `${tierName}${lp}`;
+  return `${tierName}${div}${lp}`;
 }
 
 const primaryTier = computed(() => {
