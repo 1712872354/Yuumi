@@ -168,6 +168,33 @@ const avgCs = computed(() => {
   return Math.round(sum / real.length);
 });
 
+const avgVision = computed(() => {
+  const list = props.playerData?.matches;
+  if (!list || list.length === 0) return undefined;
+  const real = list.filter((m) => !m.remake);
+  if (real.length === 0) return undefined;
+  const sum = real.reduce((acc, m) => acc + (m.visionScore || 0), 0);
+  const avg = sum / real.length;
+  return avg > 0 ? avg.toFixed(1) : undefined;
+});
+
+const avgDamageRatio = computed(() => {
+  const list = props.playerData?.matches;
+  if (!list || list.length === 0) return undefined;
+  let dealt = 0;
+  let taken = 0;
+  let n = 0;
+  for (const m of list) {
+    if (m.remake) continue;
+    if (!m.totalDamage && !m.totalDamageTaken) continue;
+    dealt += m.totalDamage || 0;
+    taken += m.totalDamageTaken || 0;
+    n++;
+  }
+  if (n === 0 || taken <= 0) return undefined;
+  return Math.round((dealt / taken) * 100);
+});
+
 function getWinRateClass(rate: number | undefined): string {
   if (rate === undefined) return "stat-dim";
   if (rate >= 53) return "stat-win";
@@ -366,6 +393,16 @@ function copyGameId(e: MouseEvent, gameId: number) {
         <span v-if="avgCs !== undefined" class="si">
           <span class="si-l">CS:</span>
           <span class="si-v">{{ avgCs }}</span>
+        </span>
+        <span v-if="avgVision !== undefined" class="si">
+          <span class="si-l">视野:</span>
+          <span class="si-v">{{ avgVision }}</span>
+        </span>
+        <span v-if="avgDamageRatio !== undefined" class="si">
+          <span class="si-l">伤转:</span>
+          <span class="si-v" :class="avgDamageRatio >= 100 ? 'stat-win' : avgDamageRatio < 80 ? 'stat-loss' : ''">
+            {{ avgDamageRatio }}%
+          </span>
         </span>
       </div>
       <div v-if="cardTags.length" class="tag-row">

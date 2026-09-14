@@ -59,7 +59,9 @@ pub struct LcuMatchStats {
     pub neutral_minions_killed: Option<i32>,
     pub gold_earned: Option<i32>,
     pub total_damage_dealt_to_champions: Option<i32>,
+    pub total_damage_taken: Option<i32>,
     pub total_heal: Option<i32>,
+    pub vision_score: Option<i32>,
     #[serde(default)]
     pub game_ended_in_early_surrender: bool,
     #[serde(default)]
@@ -109,7 +111,9 @@ pub struct MatchDisplay {
     pub gold: i32,
     pub time_stamp: u64,
     pub total_damage: i32,
+    pub total_damage_taken: i32,
     pub total_heal: i32,
+    pub vision_score: i32,
     // 前端拼接图标的 URL 前缀
     pub champion_icon_url: String,
     pub spell1_icon_url: String,
@@ -184,7 +188,9 @@ impl LcuMatchGame {
             stats.total_minions_killed.unwrap_or(0) + stats.neutral_minions_killed.unwrap_or(0);
         let gold = stats.gold_earned.unwrap_or(0);
         let total_damage = stats.total_damage_dealt_to_champions.unwrap_or(0);
+        let total_damage_taken = stats.total_damage_taken.unwrap_or(0);
         let total_heal = stats.total_heal.unwrap_or(0);
+        let vision_score = stats.vision_score.unwrap_or(0);
 
         let item_ids = vec![
             stats.item0,
@@ -259,7 +265,9 @@ impl LcuMatchGame {
             gold,
             time_stamp: self.game_creation,
             total_damage,
+            total_damage_taken,
             total_heal,
+            vision_score,
             champion_icon_url,
             spell1_icon_url,
             spell2_icon_url,
@@ -701,7 +709,15 @@ pub async fn get_match_history_sgp(
             .get("totalDamageDealtToChampions")
             .and_then(|v| v.as_i64())
             .unwrap_or(0) as i32;
+        let total_damage_taken = stats
+            .get("totalDamageTaken")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
         let total_heal = stats.get("totalHeal").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let vision_score = stats
+            .get("visionScore")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
         let remake = stats
             .get("gameEndedInEarlySurrender")
             .and_then(|v| v.as_bool())
@@ -792,7 +808,9 @@ pub async fn get_match_history_sgp(
             gold,
             time_stamp: game_creation,
             total_damage,
+            total_damage_taken,
             total_heal,
+            vision_score,
             champion_icon_url,
             spell1_icon_url,
             spell2_icon_url,

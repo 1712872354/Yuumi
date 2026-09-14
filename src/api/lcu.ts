@@ -136,7 +136,9 @@ export interface MatchDisplay {
   gold: number;
   timeStamp: number;
   totalDamage: number;
+  totalDamageTaken: number;
   totalHeal: number;
+  visionScore: number;
   championIconUrl: string;
   spell1IconUrl: string;
   spell2IconUrl: string;
