@@ -482,6 +482,10 @@ export interface FunctionsConfig {
   EnableAutoAramTeamSide: boolean;
   AramTeamSideVisibleToTeam: boolean;
   EnableAutoTagReminder: boolean;
+  /** 对局结束自动给极端表现玩家打标 */
+  EnableAutoPlayerTag: boolean;
+  /** 0 严格 / 1 标准 / 2 宽松 */
+  AutoTagSensitivity: number;
 }
 
 export interface OtherConfig {
@@ -557,6 +561,11 @@ export interface SavedPlayer {
   lastMetAt: number | null;
   lastQueueType: string | null;
   encounterCount: number;
+  /** 最近自动标签（大腿/坑/演员/C位/躺赢） */
+  autoTag?: string | null;
+  autoScore?: number | null;
+  autoReason?: string | null;
+  autoTagStats?: string | null;
 }
 
 export interface EncounteredGame {
@@ -578,6 +587,7 @@ export interface PageResult<T> {
 export interface SavedPlayerMarker {
   tag: string | null;
   encounterCount: number;
+  autoTag?: string | null;
 }
 
 export interface SaveSavedPlayerInput {

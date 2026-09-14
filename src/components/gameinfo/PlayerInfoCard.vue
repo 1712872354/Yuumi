@@ -237,7 +237,18 @@ const cardTags = computed(() => {
   }
   const puuid = data.info?.puuid;
   if (puuid && props.savedMap?.[puuid]) {
-    tags.push({ text: t("gameInfo.tagMarked"), cls: "tag-marked" });
+    const marker = props.savedMap[puuid];
+    if (marker.tag) {
+      tags.push({ text: t("gameInfo.tagMarked"), cls: "tag-marked" });
+    }
+    // 自动标签（大腿/坑/演员等）
+    if (marker.autoTag) {
+      const isGood = marker.autoTag === "大腿" || marker.autoTag === "C位";
+      tags.push({
+        text: marker.autoTag,
+        cls: isGood ? "tag-auto-good" : "tag-auto-bad",
+      });
+    }
   }
   if (data.fateFlag === "ally") {
     tags.push({ text: t("gameInfo.tagFateAlly"), cls: "tag-fate-ally" });
@@ -817,6 +828,18 @@ function copyGameId(e: MouseEvent, gameId: number) {
 .tag-pos {
   background: var(--tier-blue-bg, rgba(59, 130, 246, 0.12));
   color: var(--tier-blue, #3b82f6);
+}
+.tag-auto-good {
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.25), rgba(234, 88, 12, 0.2));
+  color: #b45309;
+  font-weight: 800;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.35);
+}
+.tag-auto-bad {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.18), rgba(190, 18, 60, 0.15));
+  color: #b91c1c;
+  font-weight: 800;
+  box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.3);
 }
 
 /* ─── 战绩 ─── */

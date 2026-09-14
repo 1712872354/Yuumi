@@ -1,4 +1,4 @@
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -911,6 +911,7 @@ fn spawn_record_encountered_players(app_handle: AppHandle) {
         };
 
         let queue_type = cache.queue_id.to_string();
+        let self_puuid_for_tag = self_puuid.clone();
         let recorded = crate::saved_players::record_encounters(
             app_state,
             cache.players,
@@ -920,7 +921,149 @@ fn spawn_record_encountered_players(app_handle: AppHandle) {
         )
         .await;
         log::info!("对局结束相遇记录完成，共 {} 名玩家", recorded);
+
+        // 自动打标（极端表现）
+        spawn_auto_player_tag(app_handle.clone(), self_puuid_for_tag, cache.game_id).await;
     });
+}
+
+/// 对局结束：拉取本局完整 stats，给极端玩家写入 auto_tag
+async fn spawn_auto_player_tag(app_handle: AppHandle, self_puuid: String, game_id: i64) {
+    // 读配置
+    let enabled;
+    let sensitivity;
+    {
+        let state = app_handle.state::<crate::AppState>();
+        let guard = state.config.try_read();
+        let pair = match guard {
+            Ok(c) => (
+                c.functions.enable_auto_player_tag,
+                c.functions.auto_tag_sensitivity,
+            ),
+            Err(_) => (true, 1u32),
+        };
+        enabled = pair.0;
+        sensitivity = pair.1;
+    }
+    if !enabled {
+        return;
+    }
+
+    crate::spawn_log_panic(async move {
+        // 结算数据可能稍晚才进 match-history，稍等再拉
+        tokio::time::sleep(std::time::Duration::from_secs(8)).await;
+
+        let state = app_handle.state::<crate::AppState>();
+        let app_state = state.inner();
+
+        let Some(game_json) = fetch_match_json_by_id(app_state, &self_puuid, game_id).await else {
+            log::debug!("自动打标：未拉到对局 {} 详情，跳过", game_id);
+            return;
+        };
+
+        let players = crate::auto_tag::parse_participants_from_match_json(&game_json);
+        if players.len() < 4 {
+            log::debug!("自动打标：参与者不足，跳过");
+            return;
+        }
+
+        let tags = crate::auto_tag::evaluate_match(
+            &players,
+            crate::auto_tag::Sensitivity::from_u32(sensitivity),
+        );
+        if tags.is_empty() {
+            log::info!("自动打标：本局无极端表现");
+            return;
+        }
+
+        // 收集名字/英雄用于 upsert
+        let mut names = std::collections::HashMap::new();
+        if let Some(participants) = game_json.get("participants").and_then(|v| v.as_array()) {
+            for p in participants {
+                let Some(puuid) = p.get("puuid").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let name = p
+                    .get("summonerName")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let champ = p.get("championId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                names.insert(puuid.to_string(), (name, champ));
+            }
+        }
+
+        let applied = crate::saved_players::apply_auto_tags(
+            app_state,
+            self_puuid,
+            game_id,
+            tags.clone(),
+            names,
+        )
+        .await;
+
+        log::info!(
+            "自动打标完成: {} 人 → {:?}",
+            applied,
+            tags.iter()
+                .map(|t| format!("{}:{}", t.puuid, t.tag.as_str()))
+                .collect::<Vec<_>>()
+        );
+
+        let _ = app_handle.emit(
+            "auto-player-tagged",
+            serde_json::json!({
+                "gameId": game_id,
+                "count": applied,
+                "tags": tags.iter().map(|t| serde_json::json!({
+                    "puuid": t.puuid,
+                    "tag": t.tag.as_str(),
+                    "reason": t.reason,
+                })).collect::<Vec<_>>(),
+            }),
+        );
+    });
+}
+
+/// 按 gameId 从本地 match-history 拉取原始对局 JSON
+async fn fetch_match_json_by_id(
+    app_state: &crate::AppState,
+    self_puuid: &str,
+    game_id: i64,
+) -> Option<serde_json::Value> {
+    let (port, token, http_client) = {
+        let lcu = app_state.lcu_params().await.ok()?;
+        (lcu.port, lcu.token, lcu.http_client)
+    };
+    let auth = crate::build_auth_header(&token);
+    let url = format!(
+        "https://127.0.0.1:{}/lol-match-history/v1/products/lol/{}/matches?begIndex=0&endIndex=5",
+        port, self_puuid
+    );
+    let resp = http_client
+        .get(&url)
+        .header("Authorization", auth)
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let games = body
+        .get("games")
+        .and_then(|g| g.get("games"))
+        .and_then(|v| v.as_array())?;
+
+    for g in games {
+        let raw = g.get("json").unwrap_or(g);
+        let gid = raw.get("gameId").and_then(|v| v.as_i64()).unwrap_or(0);
+        if gid == game_id || game_id == 0 {
+            return Some(raw.clone());
+        }
+    }
+    // 找不到精确 gameId 时取最近一局（结算后 history 可能尚未带最新 id）
+    games.first().map(|g| g.get("json").unwrap_or(g).clone())
 }
 
 /// 选人阶段对带标记的玩家发送聊天提醒

@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod auto_tag;
 pub mod commands;
 pub mod config;
 pub mod lcu;

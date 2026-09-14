@@ -65,6 +65,19 @@ pub fn init_db() -> rusqlite::Result<Connection> {
             "ALTER TABLE saved_players ADD COLUMN champion_id INTEGER NOT NULL DEFAULT 0;",
         )?;
     }
+    // 自动打标字段
+    if !existing_cols.iter().any(|c| c == "auto_tag") {
+        conn.execute_batch("ALTER TABLE saved_players ADD COLUMN auto_tag TEXT;")?;
+    }
+    if !existing_cols.iter().any(|c| c == "auto_score") {
+        conn.execute_batch("ALTER TABLE saved_players ADD COLUMN auto_score REAL;")?;
+    }
+    if !existing_cols.iter().any(|c| c == "auto_reason") {
+        conn.execute_batch("ALTER TABLE saved_players ADD COLUMN auto_reason TEXT;")?;
+    }
+    if !existing_cols.iter().any(|c| c == "auto_tag_stats") {
+        conn.execute_batch("ALTER TABLE saved_players ADD COLUMN auto_tag_stats TEXT;")?;
+    }
 
     // 迁移：将因此前数据采集 bug 误记录为 '0' 的对局模式默认全部更新为海克斯大乱斗 '2400'
     let _ = conn.execute(
@@ -135,6 +148,15 @@ pub struct SavedPlayerDto {
     pub last_queue_type: Option<String>,
     #[serde(default)]
     pub encounter_count: i32,
+    /// 最近自动标签（大腿/坑/演员等）
+    #[serde(default)]
+    pub auto_tag: Option<String>,
+    #[serde(default)]
+    pub auto_score: Option<f64>,
+    #[serde(default)]
+    pub auto_reason: Option<String>,
+    #[serde(default)]
+    pub auto_tag_stats: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,13 +192,17 @@ fn row_to_saved_player(row: &rusqlite::Row<'_>) -> rusqlite::Result<SavedPlayerD
         champion_id: row.get(8)?,
         update_at: row.get(9)?,
         last_met_at: row.get(10)?,
-        last_queue_type: row.get(11).ok().flatten(),
-        encounter_count: row.get::<usize, i32>(12).unwrap_or(1),
+        auto_tag: row.get(11).ok().flatten(),
+        auto_score: row.get(12).ok().flatten(),
+        auto_reason: row.get(13).ok().flatten(),
+        auto_tag_stats: row.get(14).ok().flatten(),
+        last_queue_type: row.get(15).ok().flatten(),
+        encounter_count: row.get::<usize, i32>(16).unwrap_or(1),
     })
 }
 
 const SAVED_PLAYER_COLS: &str =
-    "puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at";
+    "puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, tag_line, champion_id, update_at, last_met_at, auto_tag, auto_score, auto_reason, auto_tag_stats";
 
 fn row_to_encountered(row: &rusqlite::Row<'_>) -> rusqlite::Result<EncounteredGameDto> {
     Ok(EncounteredGameDto {
@@ -298,6 +324,88 @@ pub async fn query_tagged_for_reminder(
     })
 }
 
+/// 应用自动打标结果：更新 auto_tag / auto_score / auto_reason，并累计历史统计。
+/// 不覆盖用户手动 tag。玩家行不存在时先 upsert 一行。
+pub async fn apply_auto_tags(
+    state: &AppState,
+    self_puuid: String,
+    game_id: i64,
+    tags: Vec<crate::auto_tag::AutoTagResult>,
+    names: std::collections::HashMap<String, (String, i32)>, // puuid -> (name, champion_id)
+) -> usize {
+    with_db(state, move |conn| {
+        if tags.is_empty() {
+            return Ok(0);
+        }
+        let ts = now();
+        let tx = conn.transaction().map_err(|e| e.to_string())?;
+        let mut applied = 0;
+
+        for t in &tags {
+            if t.puuid.is_empty() || t.puuid == self_puuid {
+                continue;
+            }
+            let (summoner_name, champion_id) = names
+                .get(&t.puuid)
+                .cloned()
+                .unwrap_or_else(|| (String::new(), 0));
+
+            // 确保有行
+            let _ = tx.execute(
+                "INSERT INTO saved_players (puuid, self_puuid, region, rso_platform_id, tag, summoner_name, profile_icon_id, update_at, last_met_at, champion_id)
+                 VALUES (?1, ?2, '', '', NULL, ?3, 0, ?4, ?4, ?5)
+                 ON CONFLICT(puuid, self_puuid, region, rso_platform_id) DO UPDATE SET
+                   summoner_name = CASE WHEN excluded.summoner_name = '' THEN saved_players.summoner_name ELSE excluded.summoner_name END,
+                   champion_id = CASE WHEN excluded.champion_id = 0 THEN saved_players.champion_id ELSE excluded.champion_id END,
+                   update_at = excluded.update_at,
+                   last_met_at = excluded.last_met_at",
+                params![t.puuid, self_puuid, summoner_name, ts, champion_id],
+            );
+
+            // 读取并更新历史标签统计
+            let stats_json: Option<String> = tx
+                .query_row(
+                    "SELECT auto_tag_stats FROM saved_players WHERE puuid = ?1 AND self_puuid = ?2",
+                    params![t.puuid, self_puuid],
+                    |r| r.get(0),
+                )
+                .ok()
+                .flatten();
+
+            let mut stats: std::collections::HashMap<String, i32> = stats_json
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+            let key = t.tag.as_key().to_string();
+            *stats.entry(key).or_insert(0) += 1;
+            let stats_str = serde_json::to_string(&stats).unwrap_or_else(|_| "{}".into());
+
+            let _ = tx.execute(
+                "UPDATE saved_players SET auto_tag = ?1, auto_score = ?2, auto_reason = ?3, auto_tag_stats = ?4, update_at = ?5
+                 WHERE puuid = ?6 AND self_puuid = ?7",
+                params![
+                    t.tag.as_str(),
+                    t.score,
+                    t.reason,
+                    stats_str,
+                    ts,
+                    t.puuid,
+                    self_puuid
+                ],
+            );
+            applied += 1;
+        }
+
+        let _ = game_id; // 预留：后续可写 auto_tag_games 明细
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(applied)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        log::error!("应用自动打标失败: {}", e);
+        0
+    })
+}
+
 // ─── Tauri 命令 ───
 
 #[derive(Debug, Deserialize)]
@@ -409,6 +517,9 @@ pub async fn query_all_saved_players(
 pub struct SavedPlayerMarker {
     pub tag: Option<String>,
     pub encounter_count: i32,
+    /// 最近自动标签（大腿/坑等）
+    #[serde(default)]
+    pub auto_tag: Option<String>,
 }
 
 /// 获取全部保存玩家的精简映射：puuid → 标记信息（tag + 相遇次数）
@@ -426,7 +537,8 @@ pub async fn get_saved_players_map(
                 "SELECT sp.puuid,
                         sp.tag,
                         (SELECT COUNT(*) FROM encountered_games eg
-                         WHERE eg.puuid = sp.puuid AND eg.self_puuid = sp.self_puuid)
+                         WHERE eg.puuid = sp.puuid AND eg.self_puuid = sp.self_puuid),
+                        sp.auto_tag
                  FROM saved_players sp WHERE sp.self_puuid = ?1",
             )
             .map_err(|e| e.to_string())?;
@@ -438,6 +550,7 @@ pub async fn get_saved_players_map(
                     SavedPlayerMarker {
                         tag: r.get(1)?,
                         encounter_count: r.get::<_, i32>(2).unwrap_or(1),
+                        auto_tag: r.get(3).ok().flatten(),
                     },
                 ))
             })

@@ -41,6 +41,18 @@ function updateTagReminder(value: boolean) {
   config.value.Functions.EnableAutoTagReminder = value;
   triggerAutoSave();
 }
+
+function updateAutoPlayerTag(value: boolean) {
+  if (!config?.value) return;
+  config.value.Functions.EnableAutoPlayerTag = value;
+  triggerAutoSave();
+}
+
+function updateAutoTagSensitivity(value: number) {
+  if (!config?.value) return;
+  config.value.Functions.AutoTagSensitivity = value;
+  triggerAutoSave();
+}
 </script>
 
 <template>
@@ -126,6 +138,31 @@ function updateTagReminder(value: boolean) {
           @update:value="updateTagReminder"
         />
       </div>
+      <div class="setting-row">
+        <span class="setting-label">{{ t("tools.autoGameflow.autoPlayerTagLabel", "对局结束自动打标") }}</span>
+        <n-switch
+          :value="config.Functions.EnableAutoPlayerTag !== false"
+          @update:value="updateAutoPlayerTag"
+        />
+      </div>
+      <div v-if="config.Functions.EnableAutoPlayerTag !== false" class="setting-row">
+        <span class="setting-label">{{ t("tools.autoGameflow.autoTagSensitivityLabel", "打标敏感度") }}</span>
+        <div class="sens-group">
+          <button
+            v-for="opt in [
+              { v: 0, label: t('tools.autoGameflow.sensStrict', '严格') },
+              { v: 1, label: t('tools.autoGameflow.sensNormal', '标准') },
+              { v: 2, label: t('tools.autoGameflow.sensLoose', '宽松') },
+            ]"
+            :key="opt.v"
+            class="sens-btn"
+            :class="{ active: (config.Functions.AutoTagSensitivity ?? 1) === opt.v }"
+            @click="updateAutoTagSensitivity(opt.v)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+      </div>
     </n-collapse-item>
   </n-collapse>
 </template>
@@ -205,5 +242,31 @@ function updateTagReminder(value: boolean) {
 .setting-label {
   font-size: 0.82rem;
   color: var(--text-muted);
+}
+
+.sens-group {
+  display: flex;
+  gap: 6px;
+}
+.sens-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.sens-btn:hover {
+  border-color: var(--primary-color);
+  color: var(--text-color);
+}
+.sens-btn.active {
+  background: var(--primary-color-alpha-15);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  font-weight: 600;
 }
 </style>

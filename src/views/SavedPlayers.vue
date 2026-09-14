@@ -53,6 +53,10 @@ function championIconUrl(id: number): string {
   return id > 0 ? `/lol-game-data/assets/v1/champion-icons/${id}.png` : "";
 }
 
+function isGoodAutoTag(tag: string): boolean {
+  return tag === "大腿" || tag === "C位";
+}
+
 function formatTime(ts: number | null): string {
   if (!ts) return $t("savedPlayersPage.noLastMet");
   const d = new Date(ts);
@@ -357,6 +361,14 @@ watch(isConnected, (connected) => {
               </span>
             </span>
             <div class="player-badges">
+              <span
+                v-if="player.autoTag"
+                class="auto-tag-badge"
+                :class="isGoodAutoTag(player.autoTag) ? 'good' : 'bad'"
+                :title="player.autoReason || player.autoTag"
+              >
+                {{ player.autoTag }}
+              </span>
               <span v-if="player.tag" class="tag-badge">{{ player.tag }}</span>
               <span v-if="player.lastQueueType" class="queue-badge">
                 {{ getQueueName(player.lastQueueType) }}
@@ -685,6 +697,23 @@ watch(isConnected, (connected) => {
   text-overflow: ellipsis;
   white-space: nowrap;
   align-self: flex-start;
+}
+
+.auto-tag-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  align-self: flex-start;
+}
+.auto-tag-badge.good {
+  background: rgba(245, 158, 11, 0.2);
+  color: #b45309;
+}
+.auto-tag-badge.bad {
+  background: rgba(220, 38, 38, 0.15);
+  color: #b91c1c;
 }
 
 .queue-badge {

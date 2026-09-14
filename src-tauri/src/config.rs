@@ -74,6 +74,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_auto_tag_sensitivity() -> u32 {
+    1
+}
+
 fn default_theme_color() -> String {
     "#009faa".into()
 }
@@ -218,6 +222,13 @@ pub struct FunctionsConfig {
     /// 选人阶段对带标记的玩家发送聊天提醒（默认关闭）
     #[serde(default)]
     pub enable_auto_tag_reminder: bool,
+
+    /// 对局结束自动给极端表现玩家打标（默认开启）
+    #[serde(default = "default_true")]
+    pub enable_auto_player_tag: bool,
+    /// 自动打标敏感度：0 严格 / 1 标准 / 2 宽松
+    #[serde(default = "default_auto_tag_sensitivity")]
+    pub auto_tag_sensitivity: u32,
 }
 
 impl Default for FunctionsConfig {
@@ -278,6 +289,8 @@ impl Default for FunctionsConfig {
             enable_auto_aram_team_side: false,
             aram_team_side_visible_to_team: false,
             enable_auto_tag_reminder: false,
+            enable_auto_player_tag: true,
+            auto_tag_sensitivity: 1,
         }
     }
 }
