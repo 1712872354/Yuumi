@@ -95,6 +95,16 @@ describe("isLikelyBotPlayer", () => {
     ).toBe(true);
   });
 
+  it("does not flag name-only players as bots", () => {
+    expect(
+      isLikelyBotPlayer({
+        displayName: "RivenMain",
+        realSummonerId: 0,
+        playerPuuid: "",
+      }),
+    ).toBe(false);
+  });
+
   it("does not flag normal players", () => {
     expect(
       isLikelyBotPlayer({

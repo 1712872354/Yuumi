@@ -255,8 +255,6 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         }
       }
 
-      let matchHistoryHidden = false;
-
       if (!info) {
         const isEnemy = store.champSelectSession?.theirTeam?.some(
           (t) =>
@@ -354,20 +352,9 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
       ]);
 
       let matches: MatchDisplay[] = rawMatches;
-      // 对局信息页：只展示本次实时拉取结果，不合并 localStorage 战绩缓存
-
-      // 空结果且合并缓存后仍为空 → 才视为隐藏/新号；
-      // 对局中本人不因 LCU 失败误标隐藏；对局中其他人也先不标，交由 UI「暂时拉不到」态
-      if (matches.length === 0) {
-        const lvl = safeInfo.summonerLevel ?? 0;
-        const isNewAccount = lvl > 0 && lvl < NEW_PLAYER_MAX_LEVEL;
-        if (!isNewAccount && !inGamePhase) {
-          matchHistoryHidden = true;
-        }
-      } else {
-        // 拉到战绩则绝不能继续显示「已隐藏」
-        matchHistoryHidden = false;
-      }
+      // 选人/对局中：LCU+SGP 失败与真空战绩无法区分。
+      // 一旦标 hidden，reusable 会永久短路不再重拉，导致部分队友整场显示「已隐藏」。
+      // 因此空结果一律不标隐藏，交由后续 session 变更触发的 loadAllPlayers 重试。
 
       if (filterEnabled && currentQueueId.value !== null) {
         matches = matches.filter(
@@ -419,7 +406,8 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         matches,
         ranked: { solo, flex },
         loading: false,
-        matchHistoryHidden,
+        // 空战绩不标 hidden，便于后续 loadAllPlayers 重试
+        matchHistoryHidden: false,
         championId:
           fallbackPlayer?.championId || fallbackPlayer?.botChampionId || 0,
         avgKda: stats.avgKda,
@@ -433,7 +421,7 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
       };
       gameInfo.setPlayer(dataObj, {
         cellId,
-        summonerId,
+        summonerId: realSummonerId,
         puuid: safeInfo.puuid || undefined,
       });
       onPlayerSaved?.();
@@ -443,19 +431,17 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         gameInfo.getPlayer({ summonerId })?.info ||
         gameInfo.getPlayer({ puuid: playerPuuid })?.info;
       console.debug(`[GameInfo] loadPlayerData 失败 (cell ${cellId}):`, e);
-      const inGame =
-        store.gamePhase === "InProgress" || store.gamePhase === "GameStart";
       gameInfo.setPlayer(
         {
           info: existing || null,
           matches: [],
           ranked: { solo: null, flex: null },
           loading: false,
-          // 对局中失败不标 hidden，避免把「暂时拉不到」显示成「战绩已隐藏」
-          matchHistoryHidden: !inGame,
+          // 失败不标 hidden：避免把「暂时拉不到」显示成「战绩已隐藏」并永久复用
+          matchHistoryHidden: false,
           championId: resolveCarryChampionId(fallbackPlayer, cellId),
         },
-        { cellId, summonerId, puuid: playerPuuid },
+        { cellId, summonerId: realSummonerId, puuid: playerPuuid },
       );
     }
     })();

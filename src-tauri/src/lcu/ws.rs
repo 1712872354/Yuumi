@@ -1,5 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
@@ -24,13 +25,20 @@ const SUBSCRIBE_MSG: &str = r#"[5, "OnJsonApiEvent"]"#;
 /// 300ms 合并一次可显著降低前端 watcher / Agent / SignalR 的全链路处理压力
 const SESSION_THROTTLE_MS: u64 = 300;
 static LAST_SESSION_TS: AtomicU64 = AtomicU64::new(0);
+/// trailing-edge：被节流窗口丢掉的最新一帧，保证 burst 末帧必达
+static PENDING_SESSION_EVENT: Mutex<Option<Value>> = Mutex::new(None);
+static TRAILING_FLUSH_ARMED: AtomicBool = AtomicBool::new(false);
 
-/// 判断 session 事件是否放行（处于节流窗口内则丢弃中间帧）
-fn session_throttle_allowed() -> bool {
-    let now = std::time::SystemTime::now()
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+/// 判断 session 事件是否放行（leading-edge：节流窗口内丢弃中间帧，末帧由 trailing 兜底）
+fn session_throttle_allowed() -> bool {
+    let now = now_ms();
     let last = LAST_SESSION_TS.load(Ordering::Relaxed);
     if now.saturating_sub(last) < SESSION_THROTTLE_MS {
         return false;
@@ -38,6 +46,59 @@ fn session_throttle_allowed() -> bool {
     LAST_SESSION_TS
         .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
         .is_ok()
+}
+
+/// 将最新 session 帧派发到前端 + BP Agent（trailing flush 与正常路径共用）
+fn dispatch_champ_select_session(app_handle: &AppHandle, event_data: &Value) {
+    let _ = app_handle.emit("lcu-ws-event", event_data.clone());
+    crate::pipeline_stats::incr_ws_events_emitted();
+
+    let state = app_handle.state::<crate::AppState>();
+    if let Some(data) = event_data.get("data") {
+        match crate::agents::auto_bp::ChampSelectSession::deserialize(data) {
+            Ok(session) => {
+                if let Err(e) = state.agents.bp_session_tx.try_send(session) {
+                    match e {
+                        tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                            crate::pipeline_stats::incr_bp_channel_dropped();
+                            log::warn!("[WS] BP Session 消息发送频繁，通道已满，丢弃过密中间帧");
+                        }
+                        tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                            log::warn!("[WS] 推送 BP Session 失败: 通道已关闭");
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "[WS] 选人会话反序列化失败: {}, data keys: {:?}",
+                    e,
+                    data.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                );
+            }
+        }
+    }
+}
+
+fn arm_trailing_session_flush(app_handle: &AppHandle) {
+    if TRAILING_FLUSH_ARMED
+        .compare_exchange(false, true, Ordering::Relaxed, Ordering::Relaxed)
+        .is_err()
+    {
+        return;
+    }
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(SESSION_THROTTLE_MS)).await;
+        TRAILING_FLUSH_ARMED.store(false, Ordering::Relaxed);
+        let pending = PENDING_SESSION_EVENT.lock().ok().and_then(|mut g| g.take());
+        let Some(event_data) = pending else {
+            return;
+        };
+        LAST_SESSION_TS.store(now_ms(), Ordering::Relaxed);
+        log::debug!("[WS] champ-select session trailing flush");
+        dispatch_champ_select_session(&handle, &event_data);
+    });
 }
 
 /// 前端关心的事件 URI 前缀列表。
@@ -310,11 +371,20 @@ fn process_event(text: &str, app_handle: &AppHandle) {
         None => return,
     };
 
-    // 选人会话事件每秒推送多次，300ms 节流合并（置于 emit 之前），
-    // 前端 emit / Agent / bench / SignalR 全链路均针对最新状态即可，丢弃过密中间帧
-    if uri.starts_with("/lol-champ-select/v1/session") && !session_throttle_allowed() {
-        crate::pipeline_stats::incr_champ_select_throttled();
-        return;
+    // 选人会话事件每秒推送多次，300ms leading-edge 节流 + trailing-edge 末帧兜底
+    if uri.starts_with("/lol-champ-select/v1/session") {
+        if !session_throttle_allowed() {
+            crate::pipeline_stats::incr_champ_select_throttled();
+            if let Ok(mut pending) = PENDING_SESSION_EVENT.lock() {
+                *pending = Some(event_data.clone());
+            }
+            arm_trailing_session_flush(app_handle);
+            return;
+        }
+        // 本帧即将正常派发，清掉可能残留的 pending，避免 trailing 重复 emit
+        if let Ok(mut pending) = PENDING_SESSION_EVENT.lock() {
+            *pending = None;
+        }
     }
 
     // 只广播前端关心的 URI（对齐 Python matchUri 的 uri 过滤）

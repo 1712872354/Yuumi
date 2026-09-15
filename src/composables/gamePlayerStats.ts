@@ -83,10 +83,7 @@ export function isLikelyBotPlayer(opts: {
     Boolean(opts.isHumanoid) ||
     Boolean(opts.botChampionId) ||
     Boolean(opts.displayName?.includes("电脑")) ||
-    Boolean(opts.summonerName?.includes("电脑")) ||
-    (!opts.realSummonerId &&
-      !opts.playerPuuid &&
-      Boolean(opts.displayName || opts.summonerName))
+    Boolean(opts.summonerName?.includes("电脑"))
   );
 }
 

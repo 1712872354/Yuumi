@@ -19,11 +19,19 @@ function player(p: Partial<ChampSelectPlayer>): ChampSelectPlayer {
 }
 
 describe("champSelectSnapshot", () => {
-  it("buildTeamSig includes cell champ and puuid", () => {
+  it("buildTeamSig includes cell champ puuid and summonerId", () => {
     const sig = buildTeamSig([
-      player({ cellId: 1, championId: 432, puuid: "a" }),
+      player({ cellId: 1, championId: 432, puuid: "a", summonerId: 88 }),
     ]);
-    expect(sig).toBe("1:432:a");
+    expect(sig).toBe("1:432:a:88");
+  });
+
+  it("buildTeamSig changes when summonerId is filled later", () => {
+    const before = buildTeamSig([player({ cellId: 1, championId: 432, puuid: "" })]);
+    const after = buildTeamSig([
+      player({ cellId: 1, championId: 432, puuid: "", summonerId: 99 }),
+    ]);
+    expect(before).not.toBe(after);
   });
 
   it("flagBots marks isHumanoid without changing ownership", () => {

@@ -13,7 +13,7 @@ export function buildTeamSig(
   return (team || [])
     .map((p) => {
       const champId = resolvePlayerChampionId(p, session);
-      return `${p.cellId}:${champId}:${p.puuid || ""}`;
+      return `${p.cellId}:${champId}:${p.puuid || ""}:${p.summonerId || ""}`;
     })
     .join(",");
 }

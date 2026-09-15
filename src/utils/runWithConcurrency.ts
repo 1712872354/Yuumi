@@ -13,7 +13,12 @@ export async function runWithConcurrency<T>(
   const run = async () => {
     while (index < items.length) {
       const current = index++;
-      await worker(items[current]);
+      try {
+        await worker(items[current]);
+      } catch (e) {
+        // 单任务失败不得中断整条并发队列，否则后续玩家会一直停在 loading 占位
+        console.debug("[runWithConcurrency] worker 失败:", e);
+      }
     }
   };
 
