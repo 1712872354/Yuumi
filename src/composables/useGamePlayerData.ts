@@ -12,13 +12,7 @@ import {
 import type { PlayerData, PremadePlayerLike } from "../types/gameInfo";
 import { computePremadeColors } from "./usePremadeGroup";
 import { runWithConcurrency } from "../utils/runWithConcurrency";
-import { fetchPlayerMastery } from "./playerMastery";
 import { inheritPlaceholderChampion } from "./identityUtils";
-import {
-  shouldWriteReserveData,
-  writeReserveSnapshotToStorage,
-  readReserveSnapshotFromStorage,
-} from "./gameReserveStore";
 import {
   fetchSessionCached,
   invalidateGameflowSessionCache,
@@ -74,111 +68,12 @@ export function useGamePlayerData(
   } = storeToRefs(gameInfo);
 
   function writeReserveData() {
-    // 内部主键表已按 puuid/pending 去重，无需再 Set
-    const loadedCount = gameInfo.uniquePlayerList().filter((d) => d.info !== null)
-      .length;
-    if (
-      !shouldWriteReserveData({
-        loadedCount,
-        gamePhase: store.gamePhase,
-        currentGameId: currentGameId.value,
-        myTeamLength: gameflowMyTeam.value.length,
-        theirTeamLength: gameflowTheirTeam.value.length,
-      })
-    ) {
-      return;
-    }
-    writeReserveSnapshotToStorage({
-      playerData: gameInfo.players,
-      myTeam: gameflowMyTeam.value,
-      theirTeam: gameflowTheirTeam.value,
-      premadeColorsMy: premadeColorsMy.value,
-      premadeColorsTheir: premadeColorsTheir.value,
-      loadedCount,
-      gameId: currentGameId.value,
-    });
+    // 对局信息页仅用实时数据：不再写入保留盘，避免与上一局串数据
   }
 
-  // ── 从 localStorage 恢复保留数据（有数据即恢复，直到新对局开始）
-  let isBackfillingMasteries = false;
-  function backfillMissingMasteries() {
-    if (isBackfillingMasteries) return;
-    const entries = gameInfo.uniquePlayerList();
-    const needBackfill = entries.filter(
-      (e) =>
-        e &&
-        e.info &&
-        !e.loading &&
-        (!e.masteries || e.masteries.length === 0) &&
-        (e.info.puuid || e.info.summonerId),
-    );
-    if (needBackfill.length === 0) return;
+  // ── 对局信息页仅用实时数据：不从 localStorage 恢复上一局 ──
 
-    isBackfillingMasteries = true;
-    // 异步排队后台拉取，每人间隔 100ms，避免突发并发
-    Promise.allSettled(
-      needBackfill.map((p, idx) =>
-        new Promise<void>((resolve) => {
-          setTimeout(async () => {
-            try {
-              const puuid = p.info?.puuid;
-              const sid = p.info?.summonerId;
-              const isMe =
-                sid === currentSummonerId.value ||
-                (!!puuid && puuid === currentSummonerPuuid.value);
-              const m = await fetchPlayerMastery(puuid, sid, isMe);
-              if (m && m.length > 0) {
-                p.masteries = m;
-              }
-            } catch {
-              /* ignore */
-            } finally {
-              resolve();
-            }
-          }, idx * 100);
-        }),
-      ),
-    ).finally(() => {
-      isBackfillingMasteries = false;
-      debouncedSavePlayerData();
-    });
-  }
-
-  function restoreReserveDataFromLocalStorage(): boolean {
-    try {
-      const snap = readReserveSnapshotFromStorage();
-      let hasRestored = false;
-      if (snap.myTeam) {
-        gameflowMyTeam.value = snap.myTeam;
-        hasRestored = true;
-      }
-      if (snap.theirTeam) {
-        gameflowTheirTeam.value = snap.theirTeam;
-        hasRestored = true;
-      }
-      if (snap.playerData) {
-        gameInfo.restorePlayers(snap.playerData);
-        hasRestored = true;
-        // 异步检查并补齐缺少熟练度的玩家（例如旧版本保留的数据）
-        backfillMissingMasteries();
-      }
-      if (snap.premadeColorsMy) {
-        premadeColorsMy.value = snap.premadeColorsMy;
-      } else if (gameflowMyTeam.value.length > 0) {
-        premadeColorsMy.value = computePremadeColors(gameflowMyTeam.value);
-      }
-      if (snap.premadeColorsTheir) {
-        premadeColorsTheir.value = snap.premadeColorsTheir;
-      } else if (gameflowTheirTeam.value.length > 0) {
-        premadeColorsTheir.value = computePremadeColors(gameflowTheirTeam.value);
-      }
-      return hasRestored;
-    } catch {
-      return false;
-    }
-  }
-
-  // ── localStorage 写入防抖
+  // ── localStorage 写入防抖（保留盘已禁用，仅作占位避免调用方改动） ──
   let saveTimer: ReturnType<typeof setTimeout> | null = null;
   function debouncedSavePlayerData() {
     if (saveTimer) clearTimeout(saveTimer);
@@ -232,9 +127,7 @@ export function useGamePlayerData(
   const shouldShowContent = computed(() => {
     if (isTftMode.value) return false;
     if (isGameActive.value) return true;
-    if (appConfig.value?.Functions?.EnableReserveGameinfo) {
-      return gameInfo.uniquePlayerList().length > 0;
-    }
+    // 实时模式：非对局阶段不展示残留内容
     return false;
   });
 
@@ -438,7 +331,6 @@ export function useGamePlayerData(
     activeTab,
     loadPlayerData,
     writeReserveData,
-    restoreReserveDataFromLocalStorage,
     updateCurrentQueueId,
     requestSeq,
   });
@@ -446,17 +338,12 @@ export function useGamePlayerData(
   // 监听 Watchers
   watch(isGameActive, (active) => {
     if (!active) {
-      // 离开游戏活跃状态（回到 Lobby / EndOfGame 等）：
-      const hasPlayerData =
-        gameflowMyTeam.value.length > 0 &&
-        gameInfo.uniquePlayerList().length > 0;
-      if (hasPlayerData) {
-        // 内存中已有刚打完的对局，确保落盘
-        writeReserveData();
-      } else {
-        // 否则（如中途启动或选人秒退离开），尝试从 localStorage 恢复上一次对局快照
-        restoreReserveDataFromLocalStorage();
-      }
+      // 实时模式：离开对局清空视图，避免残留上一局
+      gameflowMyTeam.value = [];
+      gameflowTheirTeam.value = [];
+      gameInfo.clearPlayers();
+      premadeColorsMy.value = {};
+      premadeColorsTheir.value = {};
     } else {
       // 刚进入选人阶段时，清空当前内存视图以展示当前选人
       if (store.gamePhase === "ChampSelect") {
@@ -493,19 +380,46 @@ export function useGamePlayerData(
   );
 
   // 监听 WebSocket 推送的 gameflowSession 变化，对局就绪即刻自动解析
+  let lastProcessedGameId: number | null = null;
   watch(
     () => store.gameflowSession,
     (session) => {
       if (!session?.gameData) return;
-      if (session.gameData.gameId) currentGameId.value = session.gameData.gameId;
-      if (store.gamePhase !== "InProgress" && store.gamePhase !== "GameStart") return;
+      const sessionId = session.gameData.gameId ?? null;
+      if (sessionId) currentGameId.value = sessionId;
+      if (store.gamePhase !== "InProgress" && store.gamePhase !== "GameStart") {
+        // 离开对局阶段时重置，避免下一局被误判为 gameId 变化
+        if (store.gamePhase === "ChampSelect" || store.gamePhase === "None") {
+          lastProcessedGameId = null;
+        }
+        return;
+      }
+      const gameIdChanged =
+        sessionId != null &&
+        lastProcessedGameId != null &&
+        sessionId !== lastProcessedGameId;
+      if (gameIdChanged) {
+        // 跨局：清空上一局残留，再走 processTeamData 播种当前局
+        console.debug(
+          `[GameInfo] gameflowSession gameId 变化: ${lastProcessedGameId} → ${sessionId}`,
+        );
+        gameflowMyTeam.value = [];
+        gameflowTheirTeam.value = [];
+        gameInfo.clearPlayers();
+        premadeColorsMy.value = {};
+        premadeColorsTheir.value = {};
+        currentGameId.value = sessionId;
+      }
+      if (sessionId != null) lastProcessedGameId = sessionId;
+
       const { teamOne, teamTwo } = session.gameData;
       if ((teamOne && teamOne.length > 0) || (teamTwo && teamTwo.length > 0)) {
-        // 队伍为空时加载；会话人数增长（如残缺会话补齐）时重处理，补回缺失的列
+        // 队伍为空时加载；会话人数增长（如残缺会话补齐）时重处理；跨局强制重处理
         const sessionTotal = (teamOne?.length ?? 0) + (teamTwo?.length ?? 0);
         const currentTotal =
           gameflowMyTeam.value.length + gameflowTheirTeam.value.length;
         if (
+          gameIdChanged ||
           gameflowMyTeam.value.length === 0 ||
           gameflowTheirTeam.value.length === 0 ||
           (currentTotal > 0 && sessionTotal > currentTotal)
@@ -594,14 +508,7 @@ export function useGamePlayerData(
       }
     }
 
-    if (appConfig.value?.Functions?.EnableReserveGameinfo) {
-      if (restoreReserveDataFromLocalStorage()) {
-        if (Object.keys(premadeColorsMy.value).length === 0 && gameflowMyTeam.value.length > 0)
-          premadeColorsMy.value = computePremadeColors(gameflowMyTeam.value);
-        if (Object.keys(premadeColorsTheir.value).length === 0 && gameflowTheirTeam.value.length > 0)
-          premadeColorsTheir.value = computePremadeColors(gameflowTheirTeam.value);
-      }
-    }
+    // 实时模式：不从 localStorage 恢复上一局
 
     try {
       const s = await fetchCurrentSummoner();

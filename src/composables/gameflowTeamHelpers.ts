@@ -1,12 +1,16 @@
 import type { useGameInfoStore } from "../store/gameInfoStore";
 import type { LiveGamePlayer } from "../api/lcu";
 import type { PlayerData, PremadePlayerLike } from "../types/gameInfo";
-import { isIdentityCompatible } from "./identityUtils";
+import { isIdentityCompatible, isValidPuuid } from "./identityUtils";
 import { carryChampionFromStaleCell } from "./gameTeamMapping";
 
 export function hasPlayerIdentity(p: PremadePlayerLike): boolean {
   return Boolean(
-    p.puuid || p.summonerId || p.displayName || p.gameName || p.summonerName,
+    isValidPuuid(p.puuid) ||
+      p.summonerId ||
+      p.displayName ||
+      p.gameName ||
+      p.summonerName,
   );
 }
 

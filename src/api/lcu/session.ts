@@ -23,6 +23,13 @@ export interface LiveGameTeams {
 export const fetchLiveGameTeams = () =>
   invoke<LiveGameTeams>("get_live_game_teams");
 
+/**
+ * 对局中完整双方名单：session summonerId → 并发拉召唤师详情（与 post_game 同源）。
+ * InProgress 下 GameInfo 优先用此路径。
+ */
+export const fetchOngoingGameRoster = () =>
+  invoke<LiveGameTeams>("get_ongoing_game_roster");
+
 // ─── LCU API 快捷方法（透传原始 JSON）───
 
 /** 获取游戏阶段 */

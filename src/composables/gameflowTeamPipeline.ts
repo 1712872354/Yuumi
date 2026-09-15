@@ -1,7 +1,8 @@
 import type { Ref } from "vue";
+import { ref } from "vue";
 import type { useLcuStore } from "../store/lcuStore";
 import type { useGameInfoStore } from "../store/gameInfoStore";
-import { fetchCurrentSummoner, fetchLiveGameTeams } from "../api/lcu";
+import { fetchCurrentSummoner, fetchOngoingGameRoster } from "../api/lcu";
 import type { PremadePlayerLike } from "../types/gameInfo";
 import type { GameflowParticipant } from "../types/lcu";
 import { computePremadeColors } from "./usePremadeGroup";
@@ -11,13 +12,13 @@ import {
   fetchSessionCached,
   invalidateGameflowSessionCache,
 } from "./gameflowSessionCache";
-import { clearReserveDataFromStorage } from "./reserveData";
 import {
   hasPlayerIdentity,
   livePlayerToPremade,
   mergeTeamPreservingIdentity,
   seedInitialPlayerData,
 } from "./gameflowTeamHelpers";
+import { createOngoingGameLoader } from "./ongoingGameLoader";
 
 export interface TeamPipelineDeps {
   gameInfo: ReturnType<typeof useGameInfoStore>;
@@ -43,7 +44,6 @@ export interface TeamPipelineDeps {
     fallback?: PremadePlayerLike,
   ) => Promise<void>;
   writeReserveData: () => void;
-  restoreReserveDataFromLocalStorage: () => boolean;
   updateCurrentQueueId: () => Promise<void>;
   requestSeq: { value: number };
 }
@@ -70,41 +70,72 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
     activeTab,
     loadPlayerData,
     writeReserveData,
-    restoreReserveDataFromLocalStorage,
     updateCurrentQueueId,
     requestSeq,
   } = deps;
+
+  /** 本次会话已加载过的 gameId（仅内存，不落盘） */
+  const lastLoadedGameId = ref<number | null>(null);
+
+  /** LeagueAkari 同构：InProgress 优先走 roster → puuid 实时加载 */
+  const ongoingLoader = createOngoingGameLoader({
+    gameInfo,
+    gameflowMyTeam,
+    gameflowTheirTeam,
+    premadeColorsMy,
+    premadeColorsTheir,
+    currentSummonerId,
+    currentSummonerPuuid,
+    currentGameId,
+    activeTab,
+    maxMatches: 10,
+    concurrency: 2,
+  });
 
   function playerLookup() {
     return (ref: { puuid?: string; summonerId?: number; cellId?: number }) =>
       gameInfo.getPlayer(ref);
   }
 
-  async function tryLiveTeamsFallback() {
+  /** 清空上一局残留（保留盘恢复或跨局未清理时），只在确认 gameId 变化后调用 */
+  function clearStaleGameRoster() {
+    gameflowMyTeam.value = [];
+    gameflowTheirTeam.value = [];
+    gameInfo.clearPlayers();
+    premadeColorsMy.value = {};
+    premadeColorsTheir.value = {};
+  }
+
+  /**
+   * @param force 为 true 时忽略「敌方已有身份」短路（用于 session 空队伍 / 新局刚清空后的兜底）
+   */
+  async function tryLiveTeamsFallback(force = false) {
     if (store.gamePhase !== "InProgress" && store.gamePhase !== "GameStart") {
       return;
     }
-    const enemyIdentified = gameflowTheirTeam.value.filter(hasPlayerIdentity)
-      .length;
-    if (enemyIdentified > 0) return;
+    if (!force) {
+      const enemyIdentified = gameflowTheirTeam.value.filter(hasPlayerIdentity)
+        .length;
+      if (enemyIdentified > 0) return;
+    }
     try {
-      const live = await fetchLiveGameTeams();
-      if (!live || live.theirTeam.length === 0) {
-        console.debug("[GameInfo] live teams 兜底无敌方数据");
+      // 优先走 summonerId 补全路径（与 post_game 同源），比裸 session 更完整
+      const live = await fetchOngoingGameRoster();
+      if (!live || (live.myTeam.length === 0 && live.theirTeam.length === 0)) {
+        console.debug("[GameInfo] ongoing roster 无数据");
         return;
       }
       const mappedMy = live.myTeam.map((p, i) => livePlayerToPremade(p, 0, i));
       const mappedTheir = live.theirTeam.map((p, i) =>
         livePlayerToPremade(p, 5, i),
       );
-      gameflowMyTeam.value = mergeTeamPreservingIdentity(
-        mappedMy,
-        gameflowMyTeam.value,
-      );
-      gameflowTheirTeam.value = mergeTeamPreservingIdentity(
-        mappedTheir,
-        gameflowTheirTeam.value,
-      );
+      // force 场景下禁止把旧 roster 合并进来，直接采用 live 阵容
+      gameflowMyTeam.value = force
+        ? mappedMy
+        : mergeTeamPreservingIdentity(mappedMy, gameflowMyTeam.value);
+      gameflowTheirTeam.value = force
+        ? mappedTheir
+        : mergeTeamPreservingIdentity(mappedTheir, gameflowTheirTeam.value);
       if (live.gameId != null) currentGameId.value = live.gameId;
       console.debug(
         `[GameInfo] live teams 兜底: my=${gameflowMyTeam.value.length} their=${gameflowTheirTeam.value.length}`,
@@ -254,7 +285,11 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
         if (!isStale()) writeReserveData();
       });
 
-    void tryLiveTeamsFallback();
+    // session 脱敏时：用 summonerId 补全 roster（post_game 同源），确保敌方也能拉战绩
+    const lacksIdentity =
+      gameflowTheirTeam.value.filter(hasPlayerIdentity).length === 0 ||
+      gameflowMyTeam.value.filter(hasPlayerIdentity).length === 0;
+    void tryLiveTeamsFallback(lacksIdentity);
   }
 
   async function loadFromGameflowSession() {
@@ -280,9 +315,21 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
       gameInfo.clearPlayers();
       premadeColorsMy.value = {};
       premadeColorsTheir.value = {};
-      clearReserveDataFromStorage();
       loading.value = false;
       return;
+    }
+
+    // ── InProgress / GameStart：LeagueAkari 同构主路径（roster → puuid 实时拉） ──
+    const phase = store.gamePhase;
+    if (phase === "InProgress" || phase === "GameStart") {
+      const ok = await ongoingLoader.load(requestSeq, reqId);
+      if (abortIfStale()) return;
+      if (ok) {
+        loading.value = false;
+        return;
+      }
+      // roster 失败则继续走 session 兜底
+      console.debug("[GameInfo] ongoing roster 失败，回退 session 解析");
     }
 
     if (!currentSummonerId.value) {
@@ -311,37 +358,20 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
       const t2 = teamTwo || [];
       const liveGameId = data.gameData.gameId ?? null;
       if (liveGameId) currentGameId.value = liveGameId;
-      const sessionTotal = t1.length + t2.length;
-      const isCustomGame = data.gameData.queue?.isCustom === true;
-      const needsEnemyRestore = gameflowTheirTeam.value.length === 0;
-      if (!isCustomGame && (liveGameId || needsEnemyRestore)) {
-        try {
-          const savedId =
-            Number(localStorage.getItem("yuumi_last_game_id")) || 0;
-          const savedTotal =
-            Number(localStorage.getItem("yuumi_last_game_team_count")) || 0;
-          const currentTotal =
-            gameflowMyTeam.value.length + gameflowTheirTeam.value.length;
-          const sameGame = liveGameId != null && savedId === liveGameId;
-          const canRestore =
-            (sameGame &&
-              (currentTotal === 0 ||
-                gameflowTheirTeam.value.length === 0 ||
-                (savedTotal > 0 &&
-                  (sessionTotal < savedTotal || currentTotal < savedTotal)))) ||
-            (!liveGameId && needsEnemyRestore && savedTotal >= 10);
-          if (canRestore) {
-            const restored = restoreReserveDataFromLocalStorage();
-            if (restored) {
-              console.debug(
-                `[GameInfo] 已从保留快照恢复队伍: my=${gameflowMyTeam.value.length} their=${gameflowTheirTeam.value.length}`,
-              );
-            }
-          }
-        } catch {
-          /* ignore */
-        }
+
+      // 实时模式：不读保留盘；只要内存里已有其它局数据且 gameId 变了就清空
+      if (
+        liveGameId &&
+        lastLoadedGameId.value != null &&
+        lastLoadedGameId.value !== liveGameId
+      ) {
+        console.debug(
+          `[GameInfo] gameId 变化 ${lastLoadedGameId.value} → ${liveGameId}，清空旧数据`,
+        );
+        clearStaleGameRoster();
       }
+      if (liveGameId) lastLoadedGameId.value = liveGameId;
+
       if (t1.length === 0 && t2.length === 0) {
         let retried = 0;
         const maxRetries = 10;
@@ -368,11 +398,16 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           }
           retried++;
         }
+        // session 一直空：强制 live 兜底，避免界面停留在上一局/空列表
+        if (!abortIfStale()) {
+          await tryLiveTeamsFallback(true);
+        }
         loading.value = false;
         return;
       }
 
       if (t1.length === 0 || t2.length === 0) {
+        const isCustomGame = data.gameData.queue?.isCustom === true;
         const snapshotHasBots =
           champSelectTheirTeamSnapshot.value.some((p) => p.bot || p.isBot) ||
           champSelectTeamSnapshot.value.some((p) => p.bot || p.isBot);

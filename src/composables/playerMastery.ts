@@ -28,10 +28,12 @@ export async function fetchPlayerMastery(
   puuid?: string,
   summonerId?: number,
   isMe?: boolean,
+  options?: { skipCache?: boolean },
 ): Promise<ChampionMasteryItem[]> {
   if (!puuid && !summonerId) return [];
 
-  if (puuid) {
+  const skipCache = options?.skipCache === true;
+  if (puuid && !skipCache) {
     const cached = masteryCache.get(puuid);
     if (cached && cached.length > 0) {
       return cached;
@@ -75,7 +77,7 @@ export async function fetchPlayerMastery(
       championPointsUntilNextLevel: item.championPointsUntilNextLevel,
       tokensEarned: item.tokensEarned,
     }));
-    if (puuid) {
+    if (puuid && !skipCache) {
       masteryCache.set(puuid, normalized);
     }
     return normalized;
@@ -84,13 +86,17 @@ export async function fetchPlayerMastery(
   return [];
 }
 
-/** 按 puuid 拉取排位数据（带 5 分钟缓存）。统一把 division 归一到 rank。 */
+/** 按 puuid 拉取排位数据（默认带 5 分钟缓存）。统一把 division 归一到 rank。 */
 export async function fetchRankedStatsCached(
   puuid: string,
+  options?: { skipCache?: boolean },
 ): Promise<LcuApiResponse<RankedStats>> {
-  const cached = rankCache.get(puuid);
-  if (cached) {
-    return { success: true, data: cached };
+  const skipCache = options?.skipCache === true;
+  if (!skipCache) {
+    const cached = rankCache.get(puuid);
+    if (cached) {
+      return { success: true, data: cached };
+    }
   }
   try {
     const rResp = await lcuRequest<RankedStats>(
@@ -110,7 +116,9 @@ export async function fetchRankedStatsCached(
           return { ...q, rank };
         }),
       };
-      rankCache.set(puuid, data);
+      if (!skipCache) {
+        rankCache.set(puuid, data);
+      }
       return { success: true, data };
     }
     return rResp;

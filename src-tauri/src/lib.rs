@@ -363,6 +363,7 @@ pub fn run() {
             commands::lcu::get_game_data_assets,
             commands::lcu::get_bench_my_champions,
             commands::lcu::get_live_game_teams,
+            commands::lcu::get_ongoing_game_roster,
             commands::os_shell::fetch_github_text,
             commands::os_shell::get_release_changelog,
             upload::commands::upload_single_match,

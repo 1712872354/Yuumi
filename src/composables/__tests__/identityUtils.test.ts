@@ -2,8 +2,25 @@ import { describe, expect, it } from "vitest";
 import {
   setPlayerDataAliases,
   uniquePlayerEntries,
+  isValidPuuid,
+  EMPTY_PUUID,
 } from "../identityUtils";
 import type { PlayerData } from "../../types/gameInfo";
+
+describe("isValidPuuid", () => {
+  it("rejects empty and LCU placeholder uuid", () => {
+    expect(isValidPuuid(undefined)).toBe(false);
+    expect(isValidPuuid(null)).toBe(false);
+    expect(isValidPuuid("")).toBe(false);
+    expect(isValidPuuid("  ")).toBe(false);
+    expect(isValidPuuid(EMPTY_PUUID)).toBe(false);
+  });
+
+  it("accepts real puuid", () => {
+    expect(isValidPuuid("abc-123")).toBe(true);
+    expect(isValidPuuid(` ${EMPTY_PUUID}x`)).toBe(true);
+  });
+});
 
 function emptyData(): PlayerData {
   return {

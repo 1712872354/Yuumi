@@ -88,14 +88,20 @@ export function mapGameflowParticipant(
     }
   }
 
+  // InProgress session 可能脱敏（无 puuid/sid）：从选人快照继承身份，避免只能落到「已隐藏」占位
+  const rawPuuid = p.puuid && p.puuid !== "00000000-0000-0000-0000-000000000000" ? p.puuid : undefined;
+  const snapPuuid =
+    snap?.puuid && snap.puuid !== "00000000-0000-0000-0000-000000000000"
+      ? snap.puuid
+      : undefined;
   return {
     ...p,
     cellId: stableCellId,
     championId: resolvedChampId,
-    summonerId: p.summonerId,
-    puuid: p.puuid,
-    gameName: p.gameName,
-    tagLine: p.tagLine,
+    summonerId: p.summonerId || snap?.summonerId,
+    puuid: rawPuuid || snapPuuid,
+    gameName: p.gameName || snap?.gameName,
+    tagLine: p.tagLine || snap?.tagLine,
     profileIconId,
     displayName: resolvedName,
     bot: Boolean(p.bot || p.isBot),

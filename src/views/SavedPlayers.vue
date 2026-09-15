@@ -20,6 +20,7 @@ import type {
   PageResult,
 } from "../api/lcu";
 import { useToast } from "../composables/useToast";
+import { QUEUE_NAME_MAP } from "../utils/queueMeta";
 import LcuImage from "../components/LcuImage.vue";
 import LcuOfflineState from "../components/LcuOfflineState.vue";
 
@@ -72,25 +73,10 @@ function getQueueName(queueType: string | undefined | null): string {
     return translated;
   }
 
-  const fallbackMap: Record<string, string> = {
-    "0": "自定义模式",
-    "400": "征召模式",
-    "420": "单双排位",
-    "430": "匹配模式",
-    "440": "灵活排位",
-    "450": "极地大乱斗",
-    "480": "快速模式",
-    "490": "快速模式",
-    "900": "无限火力",
-    "1010": "随机无限火力",
-    "1020": "克隆模式",
-    "1300": "极限闪击",
-    "1700": "斗魂竞技场",
-    "1710": "斗魂竞技场",
-    "2400": "海克斯大乱斗",
-    "2450": "经典海斗",
-  };
-  return fallbackMap[queueType] || queueType;
+  const id = Number(queueType);
+  return Number.isFinite(id)
+    ? (QUEUE_NAME_MAP[id] ?? queueType)
+    : queueType;
 }
 
 async function loadPlayers(append = false) {

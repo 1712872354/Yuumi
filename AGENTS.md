@@ -174,6 +174,7 @@ Yuumi/
 │   │   ├── state.rs              # AppState 按域聚合（含 SignalrRuntime）
 │   │   ├── config.rs             # 配置读写 + Schema 迁移
 │   │   ├── logging.rs            # 自研日志（按天轮转 + 单文件 2MB 分片）
+│   │   ├── pipeline_stats.rs     # 运行时管线计数（WS/上传/缓存命中）
 │   │   ├── saved_players/        # 路人集（db/types/encounters/commands/import_export）
 │   │   ├── auto_tag.rs           # 对局结束自动打标（纯逻辑 + 单测）
 │   │   ├── portable_updater.rs   # 便携版 zip 更新
@@ -258,7 +259,7 @@ GameInfo.vue → findPlayerData → PlayerInfoCard
 | :--- | :--- | :--- |
 | 配置 | `config.rs` + `runtime.rs` | PascalCase JSON；`Version` + `migrate`；便携/安装数据目录 |
 | LCU 客户端 | `lcu/client.rs` | 忽略 SSL、代理、Basic Auth、超时；CDragon 代理 |
-| 对局数据 | `parsers/match_parser.rs` `game_info.rs` | 战绩清洗、10 人段位/KDA、宿命分析 |
+| 对局数据 | `parsers/match_parser/` `parsers/game_info.rs` | 战绩清洗、10 人段位/KDA、宿命分析 |
 | 云顶 | `parsers/tft/*` + `components/tft/` | LCU 优先、CDragon 兜底；OP.GG 热门阵容 |
 | 战利品 | `loot/*` | 批量开箱、分解、重铸、精粹 |
 | 路人集 | `saved_players/` | SQLite、标签、相遇历史、导入导出、身份回填 |

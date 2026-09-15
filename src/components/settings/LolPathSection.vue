@@ -20,15 +20,15 @@ async function handleDetectPath() {
         paths.push(path);
         config.value.General.LolPath = paths;
         await updateConfig(config.value);
-        showToast("已添加: " + path);
+        showToast(t("settings.pathAdded", { path }));
       } else {
-        showToast("该路径已存在");
+        showToast(t("settings.pathExists"));
       }
     } else {
-      showToast("未检测到运行中的英雄联盟客户端", "error");
+      showToast(t("settings.lolNotDetected"), "error");
     }
   } catch (e: unknown) {
-    showToast("检测失败: " + String(e), "error");
+    showToast(t("settings.detectFailed", { error: String(e) }), "error");
   }
 }
 
@@ -43,13 +43,13 @@ async function handleBrowseFolder() {
         paths.push(path);
         config.value.General.LolPath = paths;
         await updateConfig(config.value);
-        showToast("已添加: " + path);
+        showToast(t("settings.pathAdded", { path }));
       } else {
-        showToast("该路径已存在");
+        showToast(t("settings.pathExists"));
       }
     }
   } catch (e: unknown) {
-    showToast("选择失败: " + String(e), "error");
+    showToast(t("settings.selectFailed", { error: String(e) }), "error");
   }
 }
 
@@ -59,7 +59,7 @@ async function handleAddWeGame() {
     if (!config.value) return;
     const paths = config.value.General.LolPath || [];
     if (paths.includes(WEGAME_MARKER)) {
-      showToast("WeGame 启动项已存在");
+      showToast(t("settings.wegameExists"));
       return;
     }
     const path = await invoke<string | null>("detect_wegame_path");
@@ -68,12 +68,12 @@ async function handleAddWeGame() {
       config.value.General.WegamePath = path;
       config.value.General.LolPath = paths;
       await updateConfig(config.value);
-      showToast("已添加 WeGame 启动项 (" + path + ")");
+      showToast(t("settings.wegameAdded", { path }));
     } else {
-      showToast("未检测到 WeGame 安装路径，请先安装 WeGame", "error");
+      showToast(t("settings.wegameNotFound"), "error");
     }
   } catch (e: unknown) {
-    showToast("检测失败: " + String(e), "error");
+    showToast(t("settings.detectFailed", { error: String(e) }), "error");
   }
 }
 

@@ -34,6 +34,8 @@ pub(super) fn try_create_default_lobby(
             // 检查 LCU 是否仍然连接
             if app_state.lcu.client.read().await.as_ref().is_none() {
                 log::info!("LCU 已断开，停止创建大厅");
+                let mut lobby = lobby_state.lock().unwrap_or_else(|e| e.into_inner());
+                lobby.created = false;
                 return;
             }
 
@@ -74,6 +76,9 @@ pub(super) fn try_create_default_lobby(
         }
 
         log::warn!("创建预设大厅：30 次重试均失败");
+        // 失败后允许后续事件再次触发建厅
+        let mut lobby = lobby_state.lock().unwrap_or_else(|e| e.into_inner());
+        lobby.created = false;
     });
 }
 

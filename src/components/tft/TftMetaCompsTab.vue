@@ -13,6 +13,7 @@ import {
   type TftMetaUnit,
 } from "../../composables/useTftMetaDecks";
 import { useToast } from "../../composables/useToast";
+import LcuImage from "../LcuImage.vue";
 
 const { t } = useI18n();
 const { showToast } = useToast();
@@ -473,11 +474,10 @@ onUnmounted(() => {
                       :class="['board-unit-box', { 'is-core': getBoardUnitCached(x, y)?.isCore }]"
                       :title="getChampionDisplayName(getBoardUnitCached(x, y)?.characterId)"
                     >
-                      <img
+                      <LcuImage
                         v-if="getBoardUnitCached(x, y)?.iconUrl"
                         :src="getBoardUnitCached(x, y)?.iconUrl"
                         class="board-unit-img"
-                        loading="lazy"
                       />
                       <span v-else class="board-unit-text">
                         {{ getChampionDisplayName(getBoardUnitCached(x, y)?.characterId).slice(0, 2) }}
@@ -498,11 +498,10 @@ onUnmounted(() => {
                         class="board-item-icon"
                         :title="getItemDisplayName(item)"
                       >
-                        <img
+                        <LcuImage
                           v-if="getItemIconUrl(item)"
                           :src="getItemIconUrl(item)"
                           class="board-item-img"
-                          loading="lazy"
                         />
                       </div>
                     </div>

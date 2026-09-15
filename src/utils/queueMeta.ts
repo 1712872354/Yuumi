@@ -9,17 +9,6 @@ export function isTftQueue(queueId: number): boolean {
   return (TFT_QUEUE_IDS as readonly number[]).includes(queueId);
 }
 
-/** 战绩页队列筛选项；`id: null` 表示「全部」 */
-export const QUEUE_FILTER_OPTIONS: { id: number | null; label: string }[] = [
-  { id: null, label: "全部" },
-  { id: 2400, label: "海克斯大乱斗" },
-  { id: 2450, label: "经典海斗" },
-  { id: 450, label: "极地大乱斗" },
-  { id: 430, label: "匹配模式" },
-  { id: 420, label: "单双排位" },
-  { id: 440, label: "灵活排位" },
-];
-
 /** 召唤师峡谷段位英文 → 官方中文名 */
 export const TIER_MAP: Record<string, string> = {
   NONE: "无段位",
@@ -39,9 +28,9 @@ export const TIER_MAP: Record<string, string> = {
 export const QUEUE_NAME_MAP: Record<number, string> = {
   0: "自定义模式",
   400: "征召模式",
-  420: "排位单双排",
+  420: "单双排位",
   430: "匹配模式",
-  440: "排位灵活组排",
+  440: "灵活排位",
   480: "快速模式",
   490: "快速模式",
   450: "极地大乱斗",
@@ -66,6 +55,14 @@ export const QUEUE_NAME_MAP: Record<number, string> = {
   4300: "经典模式",
   4310: "经典模式",
 };
+
+/** 战绩页队列筛选项；`id: null` 表示「全部」。label 与 QUEUE_NAME_MAP 保持一致 */
+export const QUEUE_FILTER_OPTIONS: { id: number | null; label: string }[] = (
+  [null, 2400, 2450, 450, 430, 420, 440] as const
+).map((id) => ({
+  id,
+  label: id === null ? "全部" : (QUEUE_NAME_MAP[id] ?? String(id)),
+}));
 
 /** 地图 ID → 展示名 */
 export const MAP_NAME_MAP: Record<number, string> = {

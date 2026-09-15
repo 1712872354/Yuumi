@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, inject } from "vue";
+import { computed, inject, h, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { NVirtualList } from "naive-ui";
+import { NVirtualList, NInput, useDialog } from "naive-ui";
 import { useLcuStore } from "../../store/lcuStore";
 import {
   getChampionIcon,
@@ -61,6 +61,7 @@ const { t } = useI18n();
 const lcuStore = useLcuStore();
 const { handleCareerClick } = usePlayerSearch();
 const { showToast } = useToast();
+const dialog = useDialog();
 const openOpgg = inject<(championId?: number) => void>("openOpgg");
 
 function onGuideClick(e: MouseEvent) {
@@ -355,29 +356,52 @@ function copyGameId(e: MouseEvent, gameId: number) {
 
 async function setList(kind: "black" | "white" | "") {
   const p = summonerInfo.value?.puuid;
-  if (!p || !props.selfPuuid) return;
-  try {
-    let reason: string | null = null;
-    if (kind === "black") {
-      reason = window.prompt("拉黑理由（可空）") ?? "";
-      if (reason === null) return;
-      reason = reason.trim() || null;
+  const selfPuuid = props.selfPuuid;
+  if (!p || !selfPuuid) return;
+
+  const apply = async (reason: string | null) => {
+    try {
+      await setPlayerListKind(
+        selfPuuid,
+        p,
+        kind,
+        reason,
+        displayName.value || null,
+      );
+      showToast(
+        kind === "black"
+          ? t("gameInfo.blacklistSuccess")
+          : kind === "white"
+            ? t("gameInfo.whitelistSuccess")
+            : t("gameInfo.listRemoveSuccess"),
+        "success",
+      );
+    } catch (e) {
+      console.error("[PlayerInfoCard] 名单操作失败:", e);
+      showToast(t("gameInfo.listActionFailed"), "error");
     }
-    await setPlayerListKind(
-      props.selfPuuid,
-      p,
-      kind,
-      reason,
-      displayName.value || null,
-    );
-    showToast(
-      kind === "black" ? "已拉黑" : kind === "white" ? "已加白" : "已移出名单",
-      "success",
-    );
-  } catch (e) {
-    console.error("[PlayerInfoCard] 名单操作失败:", e);
-    showToast("名单操作失败", "error");
+  };
+
+  if (kind !== "black") {
+    await apply(null);
+    return;
   }
+
+  const reasonInput = ref("");
+  dialog.create({
+    title: t("gameInfo.blacklistTitle"),
+    content: () =>
+      h(NInput, {
+        value: reasonInput.value,
+        placeholder: t("gameInfo.blacklistReasonPlaceholder"),
+        onUpdateValue: (v: string) => {
+          reasonInput.value = v;
+        },
+      }),
+    positiveText: t("tools.confirm"),
+    negativeText: t("tools.cancel"),
+    onPositiveClick: () => apply(reasonInput.value.trim() || null),
+  });
 }
 </script>
 

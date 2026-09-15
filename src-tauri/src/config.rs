@@ -415,6 +415,10 @@ impl AppConfig {
                 if cfg.migrate() {
                     cfg.save();
                 }
+                // 手改损坏的字段（URL/并发数等）在此告警，避免静默进入运行时
+                if let Err(e) = cfg.validate() {
+                    log::warn!("配置校验未通过（已加载，部分行为可能异常）: {}", e);
+                }
                 cfg
             }
             Err(e) => {

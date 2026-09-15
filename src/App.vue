@@ -155,13 +155,13 @@ onMounted(async () => {
       const dialog = getCapturedDialog();
       if (dialog) {
         dialog.error({
-          title: "配置文件异常",
+          title: t("common.configErrorTitle"),
           content: configErr,
-          positiveText: "确定",
+          positiveText: t("tools.confirm"),
           positiveButtonProps: { type: "primary" },
         });
       } else {
-        showToast("配置文件异常:\n" + configErr);
+        showToast(t("common.configErrorToast", { error: configErr }));
       }
     }
     const cfg = appConfig.value;
@@ -493,7 +493,7 @@ function handleReconnect() {
       }
     })
     .catch(() => {
-      showToast("LCU 监听服务已重置");
+      showToast(t("common.lcuReset"));
     });
 }
 

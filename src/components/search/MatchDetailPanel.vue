@@ -161,30 +161,30 @@ function queueName(queueId: number, backendName: string): string {
             <span
               :class="['team-result-label', team.win ? 'win-text' : 'lose-text']"
             >
-              {{ team.win ? "胜方" : "败方" }}
+              {{ team.win ? t("gameInfo.winLabel") : t("gameInfo.loseLabel") }}
             </span>
 
             <div class="team-objectives">
-              <span class="obj-item" title="击杀"
+              <span class="obj-item" :title="t('gameInfo.objKills')"
                 ><img class="obj-icon-img" src="/images/kills.png" /> {{ team.kills }}</span
               >
-              <span class="obj-item" title="摧毁防御塔"
+              <span class="obj-item" :title="t('gameInfo.objTowers')"
                 ><img class="obj-icon-img" :src="`/images/tower-${team.teamId}.png`" />
                 {{ team.towerKills }}</span
               >
-              <span class="obj-item" title="摧毁水晶"
+              <span class="obj-item" :title="t('gameInfo.objInhibitors')"
                 ><img class="obj-icon-img" :src="`/images/inhibitor-${team.teamId}.png`" />
                 {{ team.inhibitorKills }}</span
               >
-              <span class="obj-item" title="击杀纳什男爵"
+              <span class="obj-item" :title="t('gameInfo.objBaron')"
                 ><img class="obj-icon-img" :src="`/images/baron-${team.teamId}.png`" />
                 {{ team.baronKills }}</span
               >
-              <span class="obj-item" title="击杀巨龙"
+              <span class="obj-item" :title="t('gameInfo.objDragon')"
                 ><img class="obj-icon-img" :src="`/images/dragon-${team.teamId}.png`" />
                 {{ team.dragonKills }}</span
               >
-              <span class="obj-item" title="击杀峡谷先锋 / 虚空巢虫"
+              <span class="obj-item" :title="t('gameInfo.objHerald')"
                 ><img class="obj-icon-img" :src="`/images/herald-${team.teamId}.png`" />
                 {{ team.riftHeraldKills }}</span
               >

@@ -186,6 +186,12 @@ fn parse_live_players(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
+            // LCU 占位空 puuid：置空，避免前端拿它去拉召唤师/战绩
+            let puuid = if puuid == "00000000-0000-0000-0000-000000000000" {
+                String::new()
+            } else {
+                puuid
+            };
             let game_name = p
                 .get("gameName")
                 .or_else(|| p.get("displayName"))
@@ -243,6 +249,30 @@ pub async fn get_live_game_teams(
         .cloned()
         .unwrap_or(serde_json::Value::Null);
     let game_id = game_data.get("gameId").and_then(|v| v.as_i64());
+    // InProgress 下 team 成员 championId 可能为 0，用 playerChampionSelections 补全
+    let mut champ_by_puuid: std::collections::HashMap<String, i32> =
+        std::collections::HashMap::new();
+    if let Some(sels) = game_data
+        .get("playerChampionSelections")
+        .and_then(|v| v.as_array())
+    {
+        for s in sels {
+            if let (Some(pid), Some(cid)) = (
+                s.get("puuid").and_then(|v| v.as_str()),
+                s.get("championId").and_then(|v| v.as_i64()),
+            ) {
+                if pid != "00000000-0000-0000-0000-000000000000" && cid > 0 {
+                    champ_by_puuid.insert(pid.to_string(), cid as i32);
+                }
+            }
+        }
+    }
+    let enrich_champ = |puuid: &str, champion_id: i32| -> i32 {
+        if champion_id > 0 || puuid.is_empty() {
+            return champion_id;
+        }
+        champ_by_puuid.get(puuid).copied().unwrap_or(0)
+    };
     let team_one = game_data
         .get("teamOne")
         .and_then(|v| v.as_array())
@@ -253,6 +283,34 @@ pub async fn get_live_game_teams(
         .and_then(|v| v.as_array())
         .map(|a| parse_live_players(a))
         .unwrap_or_default();
+    let team_one: Vec<_> = team_one
+        .into_iter()
+        .map(|(sid, puuid, gn, tl, sn, cid, icon)| {
+            (
+                sid,
+                puuid.clone(),
+                gn,
+                tl,
+                sn,
+                enrich_champ(&puuid, cid),
+                icon,
+            )
+        })
+        .collect();
+    let team_two: Vec<_> = team_two
+        .into_iter()
+        .map(|(sid, puuid, gn, tl, sn, cid, icon)| {
+            (
+                sid,
+                puuid.clone(),
+                gn,
+                tl,
+                sn,
+                enrich_champ(&puuid, cid),
+                icon,
+            )
+        })
+        .collect();
 
     let self_info = lcu_request(
         app_state.inner(),
@@ -318,6 +376,249 @@ pub async fn get_live_game_teams(
     let their_team = to_players(their_raw, "their");
     log::info!(
         "[LiveTeams] gameId={:?} my={} their={}",
+        game_id,
+        my_team.len(),
+        their_team.len()
+    );
+    Ok(LiveGameTeams {
+        game_id,
+        my_team,
+        their_team,
+    })
+}
+
+/// 对局中完整双方名单：session 提供 summonerId → 并发拉取召唤师详情（与 post_game 同源路径）。
+/// 前端 GameInfo 在 InProgress 优先用本命令，避免 session 脱敏 puuid 导致战绩拉不下来。
+#[tauri::command]
+pub async fn get_ongoing_game_roster(
+    app_state: tauri::State<'_, AppState>,
+) -> Result<LiveGameTeams, String> {
+    use crate::lcu::client::lcu_request;
+
+    let session = lcu_request(app_state.inner(), "GET", "/lol-gameflow/v1/session", None).await?;
+    let game_data = session
+        .get("gameData")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let game_id = game_data.get("gameId").and_then(|v| v.as_i64());
+
+    let mut champ_by_puuid: std::collections::HashMap<String, i32> =
+        std::collections::HashMap::new();
+    if let Some(sels) = game_data
+        .get("playerChampionSelections")
+        .and_then(|v| v.as_array())
+    {
+        for s in sels {
+            if let (Some(pid), Some(cid)) = (
+                s.get("puuid").and_then(|v| v.as_str()),
+                s.get("championId").and_then(|v| v.as_i64()),
+            ) {
+                if pid != "00000000-0000-0000-0000-000000000000" && cid > 0 {
+                    champ_by_puuid.insert(pid.to_string(), cid as i32);
+                }
+            }
+        }
+    }
+
+    #[derive(Clone)]
+    struct RawMember {
+        summoner_id: i64,
+        puuid: String,
+        game_name: String,
+        tag_line: String,
+        summoner_name: String,
+        champion_id: i32,
+        profile_icon_id: i32,
+    }
+
+    let parse_team = |arr: &[serde_json::Value]| -> Vec<RawMember> {
+        arr.iter()
+            .filter_map(|p| {
+                let summoner_id = p.get("summonerId").and_then(|v| v.as_i64()).unwrap_or(0);
+                let puuid = p
+                    .get("puuid")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let puuid = if puuid == "00000000-0000-0000-0000-000000000000" {
+                    String::new()
+                } else {
+                    puuid
+                };
+                let game_name = p
+                    .get("gameName")
+                    .or_else(|| p.get("displayName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let tag_line = p
+                    .get("tagLine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let summoner_name = p
+                    .get("summonerName")
+                    .or_else(|| p.get("displayName"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let mut champion_id =
+                    p.get("championId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                if champion_id <= 0 && !puuid.is_empty() {
+                    champion_id = champ_by_puuid.get(&puuid).copied().unwrap_or(0);
+                }
+                let profile_icon_id =
+                    p.get("profileIconId").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                // 至少要有 summonerId 或姓名，否则丢弃
+                if summoner_id <= 0
+                    && game_name.is_empty()
+                    && summoner_name.is_empty()
+                    && puuid.is_empty()
+                {
+                    return None;
+                }
+                Some(RawMember {
+                    summoner_id,
+                    puuid,
+                    game_name,
+                    tag_line,
+                    summoner_name,
+                    champion_id,
+                    profile_icon_id,
+                })
+            })
+            .collect()
+    };
+
+    let team_one = game_data
+        .get("teamOne")
+        .and_then(|v| v.as_array())
+        .map(|a| parse_team(a))
+        .unwrap_or_default();
+    let team_two = game_data
+        .get("teamTwo")
+        .and_then(|v| v.as_array())
+        .map(|a| parse_team(a))
+        .unwrap_or_default();
+
+    let self_info = lcu_request(
+        app_state.inner(),
+        "GET",
+        "/lol-summoner/v1/current-summoner",
+        None,
+    )
+    .await
+    .ok();
+    let self_sid = self_info
+        .as_ref()
+        .and_then(|v| v.get("summonerId").and_then(|s| s.as_i64()))
+        .unwrap_or(0);
+    let self_puuid = self_info
+        .as_ref()
+        .and_then(|v| v.get("puuid").and_then(|s| s.as_str()))
+        .unwrap_or("")
+        .to_string();
+
+    let contains_self = |team: &[RawMember]| {
+        team.iter().any(|m| {
+            (m.summoner_id > 0 && m.summoner_id == self_sid)
+                || (!self_puuid.is_empty() && m.puuid == self_puuid)
+        })
+    };
+
+    let (my_raw, their_raw) = if contains_self(&team_one) {
+        (team_one, team_two)
+    } else if contains_self(&team_two) {
+        (team_two, team_one)
+    } else {
+        (team_one, team_two)
+    };
+
+    // 有 summonerId 的成员：并发拉取召唤师详情补全 puuid/昵称/头像
+    async fn enrich(
+        app_state: &AppState,
+        members: Vec<RawMember>,
+        team: &str,
+    ) -> Vec<LiveGamePlayer> {
+        use futures_util::StreamExt;
+        let team = team.to_string();
+        futures_util::stream::iter(members)
+            .map(|m| {
+                let team = team.clone();
+                async move {
+                    let mut puuid = m.puuid.clone();
+                    let mut game_name = m.game_name.clone();
+                    let mut tag_line = m.tag_line.clone();
+                    let mut summoner_name = m.summoner_name.clone();
+                    let mut profile_icon_id = m.profile_icon_id;
+                    if m.summoner_id > 0 {
+                        let path = format!("/lol-summoner/v1/summoners/{}", m.summoner_id);
+                        if let Ok(info) =
+                            crate::lcu::client::lcu_request(app_state, "GET", &path, None).await
+                        {
+                            if let Some(p) =
+                                info.get("puuid").and_then(|v| v.as_str()).filter(|s| {
+                                    !s.is_empty() && *s != "00000000-0000-0000-0000-000000000000"
+                                })
+                            {
+                                puuid = p.to_string();
+                            }
+                            if let Some(g) = info
+                                .get("gameName")
+                                .or_else(|| info.get("displayName"))
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                game_name = g.to_string();
+                            }
+                            if let Some(t) = info.get("tagLine").and_then(|v| v.as_str()) {
+                                tag_line = t.to_string();
+                            }
+                            if let Some(n) = info
+                                .get("displayName")
+                                .or_else(|| info.get("gameName"))
+                                .and_then(|v| v.as_str())
+                                .filter(|s| !s.is_empty())
+                            {
+                                summoner_name = n.to_string();
+                            }
+                            if let Some(icon) = info
+                                .get("profileIconId")
+                                .and_then(|v| v.as_i64())
+                                .filter(|n| *n > 0)
+                            {
+                                profile_icon_id = icon as i32;
+                            }
+                        }
+                    }
+                    if summoner_name.is_empty() && !game_name.is_empty() {
+                        summoner_name = if tag_line.is_empty() {
+                            game_name.clone()
+                        } else {
+                            format!("{}#{}", game_name, tag_line)
+                        };
+                    }
+                    LiveGamePlayer {
+                        summoner_id: m.summoner_id,
+                        puuid,
+                        summoner_name,
+                        game_name,
+                        tag_line,
+                        champion_id: m.champion_id,
+                        profile_icon_id,
+                        team: team.clone(),
+                    }
+                }
+            })
+            .buffer_unordered(10)
+            .collect()
+            .await
+    }
+
+    let my_team = enrich(app_state.inner(), my_raw, "my").await;
+    let their_team = enrich(app_state.inner(), their_raw, "their").await;
+    log::info!(
+        "[OngoingRoster] gameId={:?} my={} their={} (summonerId 补全)",
         game_id,
         my_team.len(),
         their_team.len()

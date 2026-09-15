@@ -117,37 +117,37 @@ function onPickerChange() {
           v-if="hoverActiveLane === 'default'"
           v-model="config.Functions.AutoSelectChampion"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="hoverActiveLane === 'top'"
           v-model="config.Functions.AutoSelectChampionTop"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="hoverActiveLane === 'jug'"
           v-model="config.Functions.AutoSelectChampionJug"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="hoverActiveLane === 'mid'"
           v-model="config.Functions.AutoSelectChampionMid"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="hoverActiveLane === 'bot'"
           v-model="config.Functions.AutoSelectChampionBot"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="hoverActiveLane === 'sup'"
           v-model="config.Functions.AutoSelectChampionSup"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
       </div>
     </n-collapse-item>
@@ -254,37 +254,37 @@ function onPickerChange() {
           v-if="banActiveLane === 'default'"
           v-model="config.Functions.AutoBanChampion"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="banActiveLane === 'top'"
           v-model="config.Functions.AutoBanChampionTop"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="banActiveLane === 'jug'"
           v-model="config.Functions.AutoBanChampionJug"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="banActiveLane === 'mid'"
           v-model="config.Functions.AutoBanChampionMid"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="banActiveLane === 'bot'"
           v-model="config.Functions.AutoBanChampionBot"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <ChampionPicker
           v-else-if="banActiveLane === 'sup'"
           v-model="config.Functions.AutoBanChampionSup"
           :maxCount="1"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
       </div>
     </n-collapse-item>
@@ -354,32 +354,32 @@ function onPickerChange() {
         <SpellPicker
           v-if="spellActiveLane === 'default'"
           v-model="config.Functions.AutoSetSummonerSpell"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <SpellPicker
           v-else-if="spellActiveLane === 'top'"
           v-model="config.Functions.AutoSetSummonerSpellTop"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <SpellPicker
           v-else-if="spellActiveLane === 'jug'"
           v-model="config.Functions.AutoSetSummonerSpellJug"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <SpellPicker
           v-else-if="spellActiveLane === 'mid'"
           v-model="config.Functions.AutoSetSummonerSpellMid"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <SpellPicker
           v-else-if="spellActiveLane === 'bot'"
           v-model="config.Functions.AutoSetSummonerSpellBot"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
         <SpellPicker
           v-else-if="spellActiveLane === 'sup'"
           v-model="config.Functions.AutoSetSummonerSpellSup"
-          @update:modelValue="onPickerChange"
+          @update:model-value="onPickerChange"
         />
       </div>
     </n-collapse-item>

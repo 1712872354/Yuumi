@@ -20,10 +20,10 @@ async function handleSelectScreenshotFolder() {
     if (path) {
       config.value.Functions.ScreenshotSavePath = path;
       await updateConfig(config.value);
-      showToast("已成功更新截图保存目录");
+      showToast(t("settings.screenshotDirUpdated"));
     }
   } catch (e: unknown) {
-    showToast("选择文件夹失败: " + String(e), "error");
+    showToast(t("settings.screenshotSelectFailed", { error: String(e) }), "error");
   }
 }
 
@@ -32,7 +32,7 @@ async function handleOpenScreenshotFolder() {
   try {
     await invoke("open_screenshot_folder");
   } catch (e: unknown) {
-    showToast("无法打开截图文件夹: " + String(e), "error");
+    showToast(t("settings.screenshotOpenFailed", { error: String(e) }), "error");
   }
 }
 </script>

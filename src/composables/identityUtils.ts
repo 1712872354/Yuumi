@@ -1,5 +1,15 @@
 import type { PlayerData } from "../types/gameInfo";
 
+/** LCU 占位空 puuid（参考 LeagueAkari EMPTY_PUUID） */
+export const EMPTY_PUUID = "00000000-0000-0000-0000-000000000000";
+
+/** 是否为可用 puuid（排除空串与 LCU 占位全 0 UUID） */
+export function isValidPuuid(puuid?: string | null): boolean {
+  if (!puuid) return false;
+  const t = puuid.trim();
+  return t.length > 0 && t !== EMPTY_PUUID;
+}
+
 // ── 无身份占位槽的前英雄 ID 继承：仅无身份占位可继承，实名异队数据严禁串用
 export function inheritPlaceholderChampion(
   entry: PlayerData | undefined,
@@ -9,7 +19,7 @@ export function inheritPlaceholderChampion(
   if (!champ || champ <= 0) return 0;
   const ePuuid = entry?.info?.puuid ?? "";
   const eSid = entry?.info?.summonerId ?? 0;
-  if (ePuuid) return 0;
+  if (ePuuid && ePuuid !== EMPTY_PUUID) return 0;
   if (eSid && eSid !== cellId) return 0;
   return champ;
 }
@@ -29,10 +39,14 @@ export function isIdentityCompatible(
 ): boolean {
   if (!entry?.info) return true;
   const cell = incoming.cellId ?? -1;
-  const inPuuid = (incoming.puuid || "").trim();
+  const inPuuidRaw = (incoming.puuid || "").trim();
+  const inPuuid =
+    inPuuidRaw && inPuuidRaw !== EMPTY_PUUID ? inPuuidRaw : "";
   const inSid = incoming.summonerId || 0;
   const inSidReal = Boolean(inSid) && inSid !== cell;
-  const ePuuid = (entry.info.puuid || "").trim();
+  const ePuuidRaw = (entry.info.puuid || "").trim();
+  const ePuuid =
+    ePuuidRaw && ePuuidRaw !== EMPTY_PUUID ? ePuuidRaw : "";
   const eRawSid = entry.info.summonerId || 0;
   const eSid = eRawSid === cell ? 0 : eRawSid;
   if (inPuuid && ePuuid && inPuuid !== ePuuid) return false;

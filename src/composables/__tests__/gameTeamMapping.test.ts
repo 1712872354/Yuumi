@@ -62,4 +62,34 @@ describe("mapGameflowParticipant", () => {
     );
     expect(p.championId).toBe(99);
   });
+
+  it("inherits puuid/summonerId from champ-select snapshot when session is masked", () => {
+    const ctx = {
+      ...emptyCtx,
+      champSelectTheirTeamSnapshot: [
+        {
+          cellId: 1,
+          puuid: "enemy-puuid",
+          summonerId: 424242,
+          gameName: "Enemy",
+          tagLine: "TW1",
+          championId: 103,
+          displayName: "Enemy#TW1",
+        } as never,
+      ],
+    };
+    // InProgress 脱敏：无 puuid/sid，仅 displayName
+    const p = mapGameflowParticipant(
+      participant({ summonerName: "Enemy#TW1", championId: 103 }),
+      1,
+      5,
+      true,
+      ctx,
+    );
+    expect(p.puuid).toBe("enemy-puuid");
+    expect(p.summonerId).toBe(424242);
+    expect(p.gameName).toBe("Enemy");
+    expect(p.tagLine).toBe("TW1");
+    expect(p.cellId).toBe(6);
+  });
 });

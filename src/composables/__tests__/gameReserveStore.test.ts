@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   shouldWriteReserveData,
   slimPlayerDataForReserve,
+  isDifferentReserveGame,
 } from "../gameReserveStore";
 import type { PlayerData } from "../../types/gameInfo";
 
@@ -69,5 +70,23 @@ describe("slimPlayerDataForReserve", () => {
     expect(slim.a.matches.length).toBeLessThanOrEqual(5);
     expect(slim.a.info?.puuid).toBe("a");
     expect(slim["pending:1"]).toBeUndefined();
+  });
+});
+
+describe("isDifferentReserveGame", () => {
+  it("detects new game when saved id differs", () => {
+    expect(isDifferentReserveGame(600970440932, 600970440000)).toBe(true);
+  });
+
+  it("same game is not different", () => {
+    expect(isDifferentReserveGame(600970440932, 600970440932)).toBe(false);
+  });
+
+  it("missing live or saved id is not different", () => {
+    expect(isDifferentReserveGame(null, 123)).toBe(false);
+    expect(isDifferentReserveGame(undefined, 123)).toBe(false);
+    expect(isDifferentReserveGame(0, 123)).toBe(false);
+    expect(isDifferentReserveGame(123, 0)).toBe(false);
+    expect(isDifferentReserveGame(null, 0)).toBe(false);
   });
 });

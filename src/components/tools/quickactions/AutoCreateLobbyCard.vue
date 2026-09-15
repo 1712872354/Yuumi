@@ -2,23 +2,19 @@
 import { useAutoSaveConfig } from "../../../composables/useAutoSaveConfig";
 import { useI18n } from "vue-i18n";
 import { NSwitch, NSelect, NCollapse, NCollapseItem } from "naive-ui";
+import { QUEUE_NAME_MAP } from "../../../utils/queueMeta";
 
 const { config, triggerAutoSave } = useAutoSaveConfig();
 const { t } = useI18n();
 
-const GAME_MODES: { id: number; name: string }[] = [
-  { id: 2400, name: "海克斯大乱斗" },
-  { id: 2450, name: "经典海斗" },
-  { id: 450, name: "极地大乱斗" },
-  { id: 430, name: "匹配模式" },
-  { id: 420, name: "单双排位" },
-  { id: 440, name: "灵活排位" },
-  { id: 900, name: "无限火力" },
-  { id: 1020, name: "克隆模式" },
-  { id: 1300, name: "极限闪击" },
-  { id: 1700, name: "斗魂竞技场" },
-  { id: 4300, name: "经典模式" },
-];
+/** 建厅可选队列 ID 列表；展示名统一取自 QUEUE_NAME_MAP */
+const LOBBY_QUEUE_IDS = [
+  2400, 2450, 450, 430, 420, 440, 900, 1020, 1300, 1700, 4300,
+] as const;
+
+const GAME_MODES: { id: number; name: string }[] = LOBBY_QUEUE_IDS.map(
+  (id) => ({ id, name: QUEUE_NAME_MAP[id] ?? String(id) }),
+);
 </script>
 
 <template>

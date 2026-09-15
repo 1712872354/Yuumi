@@ -19,7 +19,7 @@ import TierListPanel from "./opgg/TierListPanel.vue";
 import BuildDetailPanel from "./opgg/BuildDetailPanel.vue";
 import { useToast } from "../composables/useToast";
 
-const { locale } = useI18n();
+const { locale, t } = useI18n();
 
 // ─── LCU 英雄摘要数据结构 ───
 interface ChampionSummary {
@@ -89,7 +89,7 @@ onMounted(async () => {
   themeObserver.observe(document.documentElement, { attributes: true });
 
   try {
-    gameDataAssets.value = await invoke("get_game_data_assets");
+    gameDataAssets.value = await invoke<GameDataAssets>("get_game_data_assets");
   } catch (e) {
     console.error("加载 LCU 预加载静态资源映射失败:", e);
   }
@@ -310,9 +310,9 @@ async function setRunePage(rune: OpggRunePreset) {
         selected_perk_ids: perkIds,
       },
     });
-    showToast("符文页应用成功：" + name, "success");
+    showToast(t("opgg.runeApplySuccess", { name }), "success");
   } catch (e: unknown) {
-    showToast("应用符文页失败: " + cleanError(e), "error");
+    showToast(t("opgg.runeApplyFailed", { error: cleanError(e) }), "error");
   }
 }
 </script>

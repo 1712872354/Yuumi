@@ -12,8 +12,7 @@ import {
 import type { PlayerData, PremadePlayerLike } from "../types/gameInfo";
 import type { RankedQueueEntry } from "../types/lcu";
 import { fetchPlayerMastery, fetchRankedStatsCached } from "./playerMastery";
-import { NEW_PLAYER_MAX_LEVEL, isIdentityCompatible } from "./identityUtils";
-import { mergeMatchesWithCache } from "./gameMatchesCache";
+import { NEW_PLAYER_MAX_LEVEL, isIdentityCompatible, isValidPuuid } from "./identityUtils";
 import { computeMatchStats, computeStreak, isLikelyBotPlayer } from "./gamePlayerStats";
 
 export interface LoadPlayerDataDeps {
@@ -219,10 +218,12 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
     const loadTask = (async () => {
       try {
         let info: SummonerDisplay | null = null;
-        if (playerPuuid) {
+        // 空 puuid / LCU 占位 UUID 一律视为无身份（对齐 LeagueAkari）
+        const puuidForLoad = isValidPuuid(playerPuuid) ? playerPuuid : undefined;
+        if (puuidForLoad) {
           const resp = await lcuRequest<SummonerDisplay>(
             "GET",
-            `/lol-summoner/v2/summoners/puuid/${playerPuuid}`,
+            `/lol-summoner/v2/summoners/puuid/${puuidForLoad}`,
           );
           if (resp.success && resp.data) {
             info = resp.data;
@@ -282,8 +283,9 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
           const iconId = fallbackPlayer.profileIconId ?? 29;
           info = {
             accountId: 0,
-            summonerId: realSummonerId || 0,
-            puuid: playerPuuid || fallbackPlayer.puuid || "",
+            summonerId: realSummonerId || fallbackPlayer.summonerId || 0,
+            puuid:
+              playerPuuid || fallbackPlayer.puuid || "",
             displayName: fallbackDisplayName,
             gameName: fallbackPlayer.gameName || fallbackDisplayName,
             tagLine: fallbackPlayer.tagLine || "",
@@ -294,7 +296,7 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
             xpSinceLastLevel: 0,
             xpUntilNextLevel: 0,
           };
-          matchHistoryHidden = true;
+          // 先不标 hidden：若 fallback 带 puuid，下面仍会拉战绩；空结果再决定
         } else {
           gameInfo.setPlayer(
             {
@@ -324,10 +326,10 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
           !!currentSummonerPuuid.value &&
           safeInfo.puuid === currentSummonerPuuid.value);
 
-      // 对局中 LCU 对本人 match-history 常失败；本人强制走 SGP 合并源
+      // 对局中 LCU match-history 常失败；全员（尤其敌方）强制走 SGP 合并源
       const inGamePhase =
         store.gamePhase === "InProgress" || store.gamePhase === "GameStart";
-      const forceSgp = isCurrentPlayer && inGamePhase;
+      const forceSgp = inGamePhase;
 
       const [rawMatches, rankedResp, masteryData] = await Promise.all([
         safeInfo.puuid
@@ -352,18 +354,19 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
       ]);
 
       let matches: MatchDisplay[] = rawMatches;
-      // 本人：始终合并本地缓存（含生涯页），对局中 LCU 空结果时仍有战绩可展示
-      if (safeInfo.puuid && isCurrentPlayer) {
-        matches = mergeMatchesWithCache(safeInfo.puuid, rawMatches);
-      }
+      // 对局信息页：只展示本次实时拉取结果，不合并 localStorage 战绩缓存
 
-      // 空结果且合并缓存后仍为空 → 才视为隐藏/新号；对局中本人不因 LCU 失败误标隐藏
+      // 空结果且合并缓存后仍为空 → 才视为隐藏/新号；
+      // 对局中本人不因 LCU 失败误标隐藏；对局中其他人也先不标，交由 UI「暂时拉不到」态
       if (matches.length === 0) {
         const lvl = safeInfo.summonerLevel ?? 0;
         const isNewAccount = lvl > 0 && lvl < NEW_PLAYER_MAX_LEVEL;
-        if (!isNewAccount && !(isCurrentPlayer && inGamePhase)) {
+        if (!isNewAccount && !inGamePhase) {
           matchHistoryHidden = true;
         }
+      } else {
+        // 拉到战绩则绝不能继续显示「已隐藏」
+        matchHistoryHidden = false;
       }
 
       if (filterEnabled && currentQueueId.value !== null) {
@@ -440,13 +443,16 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         gameInfo.getPlayer({ summonerId })?.info ||
         gameInfo.getPlayer({ puuid: playerPuuid })?.info;
       console.debug(`[GameInfo] loadPlayerData 失败 (cell ${cellId}):`, e);
+      const inGame =
+        store.gamePhase === "InProgress" || store.gamePhase === "GameStart";
       gameInfo.setPlayer(
         {
           info: existing || null,
           matches: [],
           ranked: { solo: null, flex: null },
           loading: false,
-          matchHistoryHidden: true,
+          // 对局中失败不标 hidden，避免把「暂时拉不到」显示成「战绩已隐藏」
+          matchHistoryHidden: !inGame,
           championId: resolveCarryChampionId(fallbackPlayer, cellId),
         },
         { cellId, summonerId, puuid: playerPuuid },

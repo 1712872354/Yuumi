@@ -108,10 +108,8 @@ fn get_tft_local_cache_path(path: &str) -> Option<PathBuf> {
         return None;
     }
 
-    let file_name = lower_path.split('/').next_back()?.replace(".tex", ".png");
-    if file_name.is_empty() {
-        return None;
-    }
+    let raw_name = lower_path.split('/').next_back()?.replace(".tex", ".png");
+    let file_name = sanitize_cache_file_name(&raw_name)?;
 
     let sub_folder = if lower_path.contains("champion") || lower_path.contains("championsplashes") {
         "tft_champion_icons"
@@ -127,7 +125,7 @@ fn get_tft_local_cache_path(path: &str) -> Option<PathBuf> {
         crate::runtime::app_data_dir()
             .join("game")
             .join(sub_folder)
-            .join(&file_name),
+            .join(file_name),
     )
 }
 
@@ -192,6 +190,42 @@ const ALLOWED_API_PREFIXES: &[&str] = &[
     "/system/",
 ];
 
+/// 资源协议允许的 CDN host（防 SSRF：仅拉取固定公共 CDN）
+const ALLOWED_CDN_HOST: &str = "raw.communitydragon.org";
+
+/// 校验 LCU API 路径：拒绝路径穿越与空路径，再做前缀白名单。
+fn is_api_path_allowed(path: &str) -> bool {
+    if path.is_empty() || path.contains("..") || path.contains("//") {
+        return false;
+    }
+    ALLOWED_API_PREFIXES.iter().any(|p| path.starts_with(p))
+}
+
+/// 校验绝对 http(s) CDN URL 的 host 是否在白名单内。
+fn is_allowed_cdn_url(url: &str) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    match parsed.host_str() {
+        Some(host) => host.eq_ignore_ascii_case(ALLOWED_CDN_HOST),
+        None => false,
+    }
+}
+
+/// TFT 缓存文件名白名单：仅允许 [a-zA-Z0-9_.-]，拒绝 `..` / 路径分隔符。
+fn sanitize_cache_file_name(name: &str) -> Option<&str> {
+    if name.is_empty() || name == "." || name == ".." || name.contains("..") {
+        return None;
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return None;
+    }
+    Some(name)
+}
+
 /// 统一的 LCU API 请求入口（带并发信号量、传输层重试与路径白名单）。
 /// 供 Tauri command `call_lcu_api` 与内部 agent（auto_bp/auto_match）复用，
 /// 避免各模块各写一套 HTTP 调用。
@@ -201,9 +235,8 @@ pub async fn lcu_request(
     path: &str,
     body: Option<Value>,
 ) -> Result<Value, String> {
-    // 路径前缀白名单校验
-    let path_allowed = ALLOWED_API_PREFIXES.iter().any(|p| path.starts_with(p));
-    if !path_allowed {
+    // 路径前缀白名单校验（含 `..` / `//` 防穿越）
+    if !is_api_path_allowed(path) {
         return Err(format!("不允许的 API 路径: {}", path));
     }
 
@@ -372,6 +405,10 @@ async fn resolve_asset(app_state: &AppState, path: &str) -> Result<(Vec<u8>, Str
             "不允许的资源路径，必须以 /lol-game-data/assets/、/fe/lol-loot/assets/ 或 http(s):// 开头"
                 .to_string(),
         );
+    }
+    // 绝对 URL 仅允许固定 CDN host，防 SSRF
+    if is_http_cdn && !is_allowed_cdn_url(path) {
+        return Err(format!("不允许的 CDN host，仅支持 {}", ALLOWED_CDN_HOST));
     }
 
     // 优先读取 TFT 本地持久化缓存。
@@ -692,5 +729,40 @@ mod tests {
         let path = "https://raw.communitydragon.org/latest/plugins/rcp-be-lol-game-data/global/default/assets/tft18_champion.tft18_1.png";
         let lower = path.to_lowercase();
         assert!(has_tft_season_prefix(&lower) || lower.contains("/tft/"));
+    }
+
+    #[test]
+    fn api_path_blocks_traversal_and_double_slash() {
+        assert!(is_api_path_allowed("/lol-gameflow/v1/gameflow-phase"));
+        assert!(!is_api_path_allowed("/lol-summoner/../lol-chat/v1/friends"));
+        assert!(!is_api_path_allowed("/lol-gameflow//v1/x"));
+        assert!(!is_api_path_allowed(""));
+        assert!(!is_api_path_allowed("/evil/path"));
+    }
+
+    #[test]
+    fn cdn_url_requires_allowed_host() {
+        assert!(is_allowed_cdn_url(
+            "https://raw.communitydragon.org/latest/game/assets/x.png"
+        ));
+        assert!(!is_allowed_cdn_url("https://evil.example/x.png"));
+        assert!(!is_allowed_cdn_url(
+            "https://raw.communitydragon.org.evil.example/x.png"
+        ));
+        assert!(!is_allowed_cdn_url("http://127.0.0.1/x.png"));
+        assert!(!is_allowed_cdn_url("not-a-url"));
+    }
+
+    #[test]
+    fn cache_file_name_rejects_traversal() {
+        assert_eq!(
+            sanitize_cache_file_name("tft18_champion.png"),
+            Some("tft18_champion.png")
+        );
+        assert_eq!(sanitize_cache_file_name(".."), None);
+        assert_eq!(sanitize_cache_file_name("a..b"), None);
+        assert_eq!(sanitize_cache_file_name("a/b.png"), None);
+        assert_eq!(sanitize_cache_file_name(""), None);
+        assert_eq!(sanitize_cache_file_name("bad name.png"), None);
     }
 }

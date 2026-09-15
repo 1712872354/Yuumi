@@ -56,6 +56,23 @@ export function shouldWriteReserveData(input: ReserveWriteInput): boolean {
   return true;
 }
 
+/**
+ * 当前 live gameId 与保留盘中记录的上一局是否不同。
+ * 用于启动恢复 / InProgress 加载时识别「新对局」，避免把上一局 roster 合并进当前局。
+ */
+export function isDifferentReserveGame(
+  liveGameId: number | null | undefined,
+  savedGameId: number,
+): boolean {
+  if (liveGameId == null || liveGameId === 0) return false;
+  if (savedGameId === 0) return false;
+  return savedGameId !== liveGameId;
+}
+
+export function readSavedReserveGameId(): number {
+  return readNumber(RESERVE_KEYS.gameId);
+}
+
 export interface ReserveSnapshot {
   playerData: Record<string | number, PlayerData>;
   myTeam: PremadePlayerLike[];
