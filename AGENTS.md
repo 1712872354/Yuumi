@@ -180,8 +180,7 @@ Yuumi/
 │   │   ├── portable_updater.rs   # 便携版 zip 更新
 │   │   ├── updater.rs            # 安装版更新
 │   │   ├── signalr.rs            # SignalR Hub 远程反代（状态在 AppState.signalr）
-│   │   ├── lcu_ops.rs            # LCU 业务工具（房间/摇号/符文/皮肤/观战/设置读写）
-│   │   ├── commands/             # config / lcu / os_shell（系统/启动/GitHub）
+│   │   ├── commands/             # config / lcu / path_detect / client_launch / window_ui / github / lobby / runes / skins / opgg / client_tools / spectate
 │   │   ├── lcu/                  # monitor / client / ws / opgg / sgp / game_data
 │   │   ├── parsers/              # summoner / match_parser/ / game_info / tft/
 │   │   │   └── match_parser/     # types+queue_time + display + history + teammates

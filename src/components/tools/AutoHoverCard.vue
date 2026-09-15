@@ -9,16 +9,23 @@ import SpellPicker from "../SpellPicker.vue";
 const { config, triggerAutoSave } = useAutoSaveConfig();
 const { t } = useI18n();
 
-// 分路选择状态
-const hoverActiveLane = ref<"default" | "top" | "jug" | "mid" | "bot" | "sup">(
-  "default",
-);
-const banActiveLane = ref<"default" | "top" | "jug" | "mid" | "bot" | "sup">(
-  "default",
-);
-const spellActiveLane = ref<"default" | "top" | "jug" | "mid" | "bot" | "sup">(
-  "default",
-);
+import type { RoleCandidatePool } from "../../api/lcu";
+
+type LaneKey = "default" | "top" | "jug" | "mid" | "bot" | "sup";
+
+const hoverActiveLane = ref<LaneKey>("default");
+const banActiveLane = ref<LaneKey>("default");
+const spellActiveLane = ref<LaneKey>("default");
+
+/** UI 分路 tab → RoleCandidatePool 字段 */
+const LANE_POOL_KEY: Record<LaneKey, keyof RoleCandidatePool> = {
+  default: "General",
+  top: "Top",
+  jug: "Jug",
+  mid: "Mid",
+  bot: "Bot",
+  sup: "Sup",
+};
 
 const LANE_OPTIONS = computed(
   () =>
@@ -114,38 +121,7 @@ function onPickerChange() {
 
       <div class="setting-picker-row">
         <ChampionPicker
-          v-if="hoverActiveLane === 'default'"
-          v-model="config.Functions.AutoSelectChampion"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="hoverActiveLane === 'top'"
-          v-model="config.Functions.AutoSelectChampionTop"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="hoverActiveLane === 'jug'"
-          v-model="config.Functions.AutoSelectChampionJug"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="hoverActiveLane === 'mid'"
-          v-model="config.Functions.AutoSelectChampionMid"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="hoverActiveLane === 'bot'"
-          v-model="config.Functions.AutoSelectChampionBot"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="hoverActiveLane === 'sup'"
-          v-model="config.Functions.AutoSelectChampionSup"
+          v-model="config.Functions.AutoSelect[LANE_POOL_KEY[hoverActiveLane]]"
           :maxCount="1"
           @update:model-value="onPickerChange"
         />
@@ -251,38 +227,7 @@ function onPickerChange() {
 
       <div class="setting-picker-row">
         <ChampionPicker
-          v-if="banActiveLane === 'default'"
-          v-model="config.Functions.AutoBanChampion"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="banActiveLane === 'top'"
-          v-model="config.Functions.AutoBanChampionTop"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="banActiveLane === 'jug'"
-          v-model="config.Functions.AutoBanChampionJug"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="banActiveLane === 'mid'"
-          v-model="config.Functions.AutoBanChampionMid"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="banActiveLane === 'bot'"
-          v-model="config.Functions.AutoBanChampionBot"
-          :maxCount="1"
-          @update:model-value="onPickerChange"
-        />
-        <ChampionPicker
-          v-else-if="banActiveLane === 'sup'"
-          v-model="config.Functions.AutoBanChampionSup"
+          v-model="config.Functions.AutoBan[LANE_POOL_KEY[banActiveLane]]"
           :maxCount="1"
           @update:model-value="onPickerChange"
         />
@@ -352,33 +297,7 @@ function onPickerChange() {
 
       <div class="setting-picker-row">
         <SpellPicker
-          v-if="spellActiveLane === 'default'"
-          v-model="config.Functions.AutoSetSummonerSpell"
-          @update:model-value="onPickerChange"
-        />
-        <SpellPicker
-          v-else-if="spellActiveLane === 'top'"
-          v-model="config.Functions.AutoSetSummonerSpellTop"
-          @update:model-value="onPickerChange"
-        />
-        <SpellPicker
-          v-else-if="spellActiveLane === 'jug'"
-          v-model="config.Functions.AutoSetSummonerSpellJug"
-          @update:model-value="onPickerChange"
-        />
-        <SpellPicker
-          v-else-if="spellActiveLane === 'mid'"
-          v-model="config.Functions.AutoSetSummonerSpellMid"
-          @update:model-value="onPickerChange"
-        />
-        <SpellPicker
-          v-else-if="spellActiveLane === 'bot'"
-          v-model="config.Functions.AutoSetSummonerSpellBot"
-          @update:model-value="onPickerChange"
-        />
-        <SpellPicker
-          v-else-if="spellActiveLane === 'sup'"
-          v-model="config.Functions.AutoSetSummonerSpellSup"
+          v-model="config.Functions.AutoSetSpells[LANE_POOL_KEY[spellActiveLane]]"
           @update:model-value="onPickerChange"
         />
       </div>

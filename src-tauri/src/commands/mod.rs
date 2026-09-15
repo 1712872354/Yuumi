@@ -1,6 +1,14 @@
 // ─── Tauri 命令薄封装层 ───
-// 本模块仅包含对 Tauri invoke 暴露的轻量命令（文件选择、系统操作等）。
-// 业务逻辑较重的命令放在顶层模块：`lcu_ops`（LCU 业务）、`os_shell`（系统/启动/GitHub）。
+// 按业务域拆分：path_detect / client_launch / window_ui / github / lobby / runes / skins / opgg / client_tools / spectate / config / lcu。
+pub mod client_launch;
+pub mod client_tools;
 pub mod config;
+pub mod github;
 pub mod lcu;
-pub mod os_shell;
+pub mod lobby;
+pub mod opgg;
+pub mod path_detect;
+pub mod runes;
+pub mod skins;
+pub mod spectate;
+pub mod window_ui;

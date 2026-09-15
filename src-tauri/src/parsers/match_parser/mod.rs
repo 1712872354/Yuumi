@@ -9,16 +9,42 @@ pub use queue_time::{is_arena_queue, is_tft_queue, queue_id_to_opgg_mode};
 pub use teammates::{get_recent_teammates, RecentTeammate, RecentTeammatesResponse};
 
 pub(crate) mod queue_time {
-    // ─── 队列 ID 映射 ───
+    use std::collections::HashMap;
+    use std::sync::OnceLock;
+
+    // ─── 队列元数据（与前端共用 src/shared/queue_meta.json 单一数据源） ───
+
+    /// 与前端 `src/utils/queueMeta.ts` / `src/shared/queue_meta.json` 同源。
+    const QUEUE_META_JSON: &str = include_str!("../../../../src/shared/queue_meta.json");
+
+    #[derive(Debug, Clone, serde::Deserialize)]
+    struct QueueMetaEntry {
+        name: String,
+        map: String,
+    }
+
+    #[derive(Debug, Clone, serde::Deserialize)]
+    struct QueueMetaFile {
+        #[serde(rename = "tftQueueIds")]
+        tft_queue_ids: Vec<i32>,
+        queues: HashMap<String, QueueMetaEntry>,
+    }
+
+    fn queue_meta() -> &'static QueueMetaFile {
+        static META: OnceLock<QueueMetaFile> = OnceLock::new();
+        META.get_or_init(|| {
+            serde_json::from_str(QUEUE_META_JSON).expect("src/shared/queue_meta.json 解析失败")
+        })
+    }
 
     /// 斗魂竞技场队列（普通 1700 / 排位 1710），队伍归属应看 subteamPlacement 而非 teamId
     pub fn is_arena_queue(queue_id: i64) -> bool {
         matches!(queue_id, 1700 | 1710)
     }
 
-    /// 云顶之弈队列（与前端 `TFT_QUEUE_IDS` 对齐；两边需同步改）
+    /// 云顶之弈队列（与前端 `TFT_QUEUE_IDS` 同源）
     pub fn is_tft_queue(queue_id: i32) -> bool {
-        matches!(queue_id, 1090 | 1100 | 1130 | 1160)
+        queue_meta().tft_queue_ids.contains(&queue_id)
     }
 
     /// 将 queueId 映射为 OP.GG 使用的游戏模式标识。
@@ -36,135 +62,19 @@ pub(crate) mod queue_time {
     }
 
     pub(crate) struct QueueInfo {
-        pub(crate) name: &'static str,
-        pub(crate) map: &'static str,
+        pub(crate) name: String,
+        pub(crate) map: String,
     }
 
     pub(crate) fn get_queue_info(queue_id: i32) -> QueueInfo {
-        match queue_id {
-            // 召唤师峡谷
-            400 => QueueInfo {
-                name: "征召模式",
-                map: "召唤师峡谷",
+        match queue_meta().queues.get(&queue_id.to_string()) {
+            Some(entry) => QueueInfo {
+                name: entry.name.clone(),
+                map: entry.map.clone(),
             },
-            420 => QueueInfo {
-                name: "排位单双排",
-                map: "召唤师峡谷",
-            },
-            430 => QueueInfo {
-                name: "匹配模式",
-                map: "召唤师峡谷",
-            },
-            440 => QueueInfo {
-                name: "排位灵活组排",
-                map: "召唤师峡谷",
-            },
-            480 => QueueInfo {
-                name: "快速模式",
-                map: "召唤师峡谷",
-            },
-            490 => QueueInfo {
-                name: "快速模式",
-                map: "召唤师峡谷",
-            },
-            // 嚎哭深渊
-            450 => QueueInfo {
-                name: "极地大乱斗",
-                map: "嚎哭深渊",
-            },
-            // 海克斯大乱斗
-            2400 => QueueInfo {
-                name: "海克斯大乱斗",
-                map: "嚎哭深渊",
-            },
-            // 经典海斗 (Classic Hextech ARAM / KIWI_JADE)
-            2450 => QueueInfo {
-                name: "经典海斗",
-                map: "嚎哭深渊",
-            },
-            // 限时/特殊模式
-            800 => QueueInfo {
-                name: "人机对战",
-                map: "召唤师峡谷",
-            },
-            810 => QueueInfo {
-                name: "人机对战",
-                map: "召唤师峡谷",
-            },
-            820 => QueueInfo {
-                name: "人机对战",
-                map: "嚎哭深渊",
-            },
-            830 => QueueInfo {
-                name: "人机对战",
-                map: "召唤师峡谷",
-            },
-            840 => QueueInfo {
-                name: "人机对战",
-                map: "召唤师峡谷",
-            },
-            850 => QueueInfo {
-                name: "人机对战",
-                map: "召唤师峡谷",
-            },
-            900 => QueueInfo {
-                name: "无限火力",
-                map: "召唤师峡谷",
-            },
-            1010 => QueueInfo {
-                name: "随机无限火力",
-                map: "嚎哭深渊",
-            },
-            1020 => QueueInfo {
-                name: "克隆模式",
-                map: "召唤师峡谷",
-            },
-            1300 => QueueInfo {
-                name: "极限闪击",
-                map: "极限闪击",
-            },
-            1700 => QueueInfo {
-                name: "斗魂竞技场",
-                map: "斗魂竞技场",
-            },
-            1710 => QueueInfo {
-                name: "斗魂竞技场",
-                map: "斗魂竞技场",
-            },
-            // 捉鬼模式 (Swarm)
-            1810 => QueueInfo {
-                name: "捉鬼模式",
-                map: "捉鬼模式",
-            },
-            1820 => QueueInfo {
-                name: "捉鬼模式",
-                map: "捉鬼模式",
-            },
-            1830 => QueueInfo {
-                name: "捉鬼模式",
-                map: "捉鬼模式",
-            },
-            1840 => QueueInfo {
-                name: "捉鬼模式",
-                map: "捉鬼模式",
-            },
-            // 经典模式 (League Classic)
-            4300 => QueueInfo {
-                name: "经典模式",
-                map: "召唤师峡谷",
-            },
-            4310 => QueueInfo {
-                name: "经典模式",
-                map: "召唤师峡谷",
-            },
-            // 自定义
-            0 => QueueInfo {
-                name: "自定义模式",
-                map: "自定义",
-            },
-            _ => QueueInfo {
-                name: "自定义模式",
-                map: "自定义",
+            None => QueueInfo {
+                name: "自定义模式".to_string(),
+                map: "自定义".to_string(),
             },
         }
     }

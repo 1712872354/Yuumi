@@ -33,6 +33,16 @@ export interface PersonalizationConfig {
   ThemeColor: string;
 }
 
+/** 分路候选池（与 Rust RoleCandidatePool 对应） */
+export interface RoleCandidatePool {
+  General: number[];
+  Top: number[];
+  Jug: number[];
+  Mid: number[];
+  Bot: number[];
+  Sup: number[];
+}
+
 export interface FunctionsConfig {
   CareerGamesNumber: number;
   ApiConcurrencyNumber: number;
@@ -49,31 +59,15 @@ export interface FunctionsConfig {
   AutoSelectConfirmOnTimeout: boolean;
   EnableRandomSkin: boolean;
   EnableAutoSelectChampion: boolean;
-  AutoSelectChampion: number[];
-  AutoSelectChampionTop: number[];
-  AutoSelectChampionJug: number[];
-  AutoSelectChampionMid: number[];
-  AutoSelectChampionBot: number[];
-  AutoSelectChampionSup: number[];
+  AutoSelect: RoleCandidatePool;
   EnableAutoBanChampion: boolean;
-  AutoBanChampion: number[];
-  AutoBanChampionTop: number[];
-  AutoBanChampionJug: number[];
-  AutoBanChampionMid: number[];
-  AutoBanChampionBot: number[];
-  AutoBanChampionSup: number[];
+  AutoBan: RoleCandidatePool;
   AutoBanDelay: number;
   PretendBan: boolean;
   AutoAcceptCeilSwap: boolean;
   AutoAcceptChampTrade: boolean;
   EnableAutoSetSpells: boolean;
-  AutoSetSummonerSpell: number[];
-  AutoSetSummonerSpellTop: number[];
-  AutoSetSummonerSpellJug: number[];
-  AutoSetSummonerSpellMid: number[];
-  AutoSetSummonerSpellBot: number[];
-  AutoSetSummonerSpellSup: number[];
-  EnableReserveGameinfo: boolean;
+  AutoSetSpells: RoleCandidatePool;
   LcuRealtimeEnabled: boolean;
   LcuUserId: string;
   UploadEnabled: boolean;

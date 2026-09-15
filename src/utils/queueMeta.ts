@@ -1,12 +1,25 @@
-/** 战绩队列 / 段位展示元数据（Search / Career 等页共用） */
+/** 战绩队列 / 段位展示元数据（与 Rust 共用 `src/shared/queue_meta.json` 单一数据源） */
 
-/**
- * 云顶队列 ID（与 Rust `parsers::match_parser::is_tft_queue` 对齐；两边需同步改）
- */
-export const TFT_QUEUE_IDS = [1090, 1100, 1130, 1160] as const;
+import queueMetaRaw from "../shared/queue_meta.json";
+
+export interface QueueMetaEntry {
+  name: string;
+  map: string;
+}
+
+interface QueueMetaFile {
+  tftQueueIds: number[];
+  queues: Record<string, QueueMetaEntry>;
+  maps: Record<string, string>;
+}
+
+const queueMeta = queueMetaRaw as QueueMetaFile;
+
+/** 云顶队列 ID（与 Rust `is_tft_queue` 同源） */
+export const TFT_QUEUE_IDS: readonly number[] = queueMeta.tftQueueIds;
 
 export function isTftQueue(queueId: number): boolean {
-  return (TFT_QUEUE_IDS as readonly number[]).includes(queueId);
+  return TFT_QUEUE_IDS.includes(queueId);
 }
 
 /** 召唤师峡谷段位英文 → 官方中文名 */
@@ -24,37 +37,10 @@ export const TIER_MAP: Record<string, string> = {
   CHALLENGER: "最强王者",
 };
 
-/** 队列 ID → 展示名（与 Rust `get_queue_info` 对齐；i18n `gameModes.*` 优先，此处作无 i18n 场景的 fallback） */
-export const QUEUE_NAME_MAP: Record<number, string> = {
-  0: "自定义模式",
-  400: "征召模式",
-  420: "单双排位",
-  430: "匹配模式",
-  440: "灵活排位",
-  480: "快速模式",
-  490: "快速模式",
-  450: "极地大乱斗",
-  800: "人机对战",
-  810: "人机对战",
-  820: "人机对战",
-  830: "人机对战",
-  840: "人机对战",
-  850: "人机对战",
-  900: "无限火力",
-  1010: "随机无限火力",
-  1020: "克隆模式",
-  1300: "极限闪击",
-  1700: "斗魂竞技场",
-  1710: "斗魂竞技场",
-  1810: "捉鬼模式",
-  1820: "捉鬼模式",
-  1830: "捉鬼模式",
-  1840: "捉鬼模式",
-  2400: "海克斯大乱斗",
-  2450: "经典海斗",
-  4300: "经典模式",
-  4310: "经典模式",
-};
+/** 队列 ID → 展示名（与 Rust `get_queue_info` 同源；i18n `gameModes.*` 优先，此处作无 i18n 场景的 fallback） */
+export const QUEUE_NAME_MAP: Record<number, string> = Object.fromEntries(
+  Object.entries(queueMeta.queues).map(([id, meta]) => [Number(id), meta.name]),
+);
 
 /** 战绩页队列筛选项；`id: null` 表示「全部」。label 与 QUEUE_NAME_MAP 保持一致 */
 export const QUEUE_FILTER_OPTIONS: { id: number | null; label: string }[] = (
@@ -64,14 +50,10 @@ export const QUEUE_FILTER_OPTIONS: { id: number | null; label: string }[] = (
   label: id === null ? "全部" : (QUEUE_NAME_MAP[id] ?? String(id)),
 }));
 
-/** 地图 ID → 展示名 */
-export const MAP_NAME_MAP: Record<number, string> = {
-  11: "召唤师峡谷",
-  12: "嚎哭深渊",
-  21: "极限闪击",
-  22: "对战大厅",
-  453: "经典峡谷",
-};
+/** 地图 ID → 展示名（与 Rust 共用） */
+export const MAP_NAME_MAP: Record<number, string> = Object.fromEntries(
+  Object.entries(queueMeta.maps).map(([id, name]) => [Number(id), name]),
+);
 
 /** 段位 + 小段（如 IV）→ 中文展示；无段位返回 tier 原文或空串 */
 export function formatTierCn(tier?: string | null, division?: string | null): string {

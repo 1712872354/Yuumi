@@ -22,7 +22,8 @@ export interface LoadPlayerDataDeps {
   currentSummonerId: Ref<number>;
   currentSummonerPuuid: Ref<string>;
   currentQueueId: Ref<number | null>;
-  onPlayerSaved: () => void;
+  /** 玩家数据写入 store 后的可选回调（保留盘已移除，预留扩展点） */
+  onPlayerSaved?: () => void;
   resolveCarryChampionId: (
     fallbackPlayer: PremadePlayerLike | undefined,
     cellId: number,
@@ -115,7 +116,7 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
           .then((m) => {
             if (m && m.length > 0) {
               reusable.masteries = m;
-              onPlayerSaved();
+              onPlayerSaved?.();
             }
           })
           .catch(() => {
@@ -128,8 +129,7 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
     const isBotPlayer = isLikelyBotPlayer({
       fallbackBot: fallbackPlayer?.bot,
       fallbackIsBot: fallbackPlayer?.isBot,
-      isHumanoid: (fallbackPlayer as PremadePlayerLike & { isHumanoid?: boolean })
-        ?.isHumanoid,
+      isHumanoid: fallbackPlayer?.isHumanoid,
       botChampionId: fallbackPlayer?.botChampionId,
       displayName: fallbackPlayer?.displayName,
       summonerName: fallbackPlayer?.summonerName,
@@ -171,7 +171,7 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         },
         { cellId, summonerId: realSummonerId, puuid: playerPuuid },
       );
-      onPlayerSaved();
+      onPlayerSaved?.();
       return;
     }
 
@@ -436,7 +436,7 @@ export function createLoadPlayerData(deps: LoadPlayerDataDeps) {
         summonerId,
         puuid: safeInfo.puuid || undefined,
       });
-      onPlayerSaved();
+      onPlayerSaved?.();
     } catch (e) {
       const existing =
         gameInfo.getPlayer({ cellId })?.info ||

@@ -3,11 +3,8 @@ import { createPinia } from "pinia";
 import App from "./App.vue";
 import i18n from "./i18n";
 
-// 本地加载 Outfit 字体（避免依赖外部 CDN）
-import "@fontsource/outfit/300.css";
-import "@fontsource/outfit/400.css";
-import "@fontsource/outfit/600.css";
-import "@fontsource/outfit/800.css";
+// 本地加载 Outfit 字体（避免依赖外部 CDN）；仅 woff2，见 src/fonts.ts
+import "./fonts";
 
 // 全局主题变量与基础样式
 import "./styles/theme-tokens.css";

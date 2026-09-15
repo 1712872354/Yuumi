@@ -114,13 +114,14 @@ onMounted(async () => {
       const config = await fetchConfig();
       const funcs = config.Functions;
       if (funcs && funcs.EnableAutoSelectChampion) {
+        const pool = funcs.AutoSelect;
         const list = [
-          funcs.AutoSelectChampion,
-          funcs.AutoSelectChampionMid,
-          funcs.AutoSelectChampionTop,
-          funcs.AutoSelectChampionSup,
-          funcs.AutoSelectChampionJug,
-          funcs.AutoSelectChampionBot,
+          pool.General,
+          pool.Mid,
+          pool.Top,
+          pool.Sup,
+          pool.Jug,
+          pool.Bot,
         ];
         for (const arr of list) {
           if (arr && arr.length > 0 && arr[0] > 0) {

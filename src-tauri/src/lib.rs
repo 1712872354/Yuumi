@@ -3,7 +3,6 @@ pub mod auto_tag;
 pub mod commands;
 pub mod config;
 pub mod lcu;
-pub mod lcu_ops;
 pub mod logging;
 pub mod loot;
 pub mod parsers;
@@ -125,7 +124,7 @@ fn activate_main_window_with_mica(app: &tauri::AppHandle) {
             .map(|cfg| cfg.personalization.mica_enabled)
             .unwrap_or(false);
         if is_mica_enabled {
-            let _ = crate::commands::os_shell::set_mica_effect(app.clone(), true);
+            let _ = crate::commands::window_ui::set_mica_effect(app.clone(), true);
         }
     }
 }
@@ -325,19 +324,19 @@ pub fn run() {
             parsers::tft::rank::get_tft_ranked_stats,
             parsers::tft::history::get_tft_match_history,
             parsers::tft::augments::get_tft_augments,
-            lcu_ops::create_5v5_practice_lobby,
-            lcu_ops::aram_reroll_and_swap_back,
-            lcu_ops::apply_rune_page,
-            lcu_ops::get_lcu_zoom,
-            lcu_ops::fix_lcu_window,
-            lcu_ops::clear_game_cache,
-            lcu_ops::open_log_folder,
-            lcu_ops::fetch_opgg_data,
-            lcu_ops::fetch_tft_meta_decks,
-            lcu_ops::get_champion_skins,
-            lcu_ops::get_game_settings_readonly,
-            lcu_ops::set_game_settings_readonly,
-            lcu_ops::spectate_directly,
+            commands::lobby::create_5v5_practice_lobby,
+            commands::lobby::aram_reroll_and_swap_back,
+            commands::runes::apply_rune_page,
+            commands::client_tools::get_lcu_zoom,
+            commands::client_tools::fix_lcu_window,
+            commands::client_tools::clear_game_cache,
+            commands::client_tools::open_log_folder,
+            commands::opgg::fetch_opgg_data,
+            commands::opgg::fetch_tft_meta_decks,
+            commands::skins::get_champion_skins,
+            commands::client_tools::get_game_settings_readonly,
+            commands::client_tools::set_game_settings_readonly,
+            commands::spectate::spectate_directly,
             loot::open::get_openable_loots,
             loot::open::batch_open_loots,
             loot::open::smart_open_all_loots,
@@ -353,19 +352,19 @@ pub fn run() {
             commands::lcu::get_lcu_connection_info,
             pipeline_stats::get_pipeline_stats,
             commands::lcu::get_map_side,
-            commands::os_shell::detect_lol_path,
-            commands::os_shell::detect_wegame_path,
-            commands::os_shell::select_lol_folder,
-            commands::os_shell::select_folder,
-            commands::os_shell::open_screenshot_folder,
-            commands::os_shell::set_mica_effect,
-            commands::os_shell::launch_lol_client,
+            commands::path_detect::detect_lol_path,
+            commands::path_detect::detect_wegame_path,
+            commands::path_detect::select_lol_folder,
+            commands::path_detect::select_folder,
+            commands::window_ui::open_screenshot_folder,
+            commands::window_ui::set_mica_effect,
+            commands::client_launch::launch_lol_client,
             commands::lcu::get_game_data_assets,
             commands::lcu::get_bench_my_champions,
             commands::lcu::get_live_game_teams,
             commands::lcu::get_ongoing_game_roster,
-            commands::os_shell::fetch_github_text,
-            commands::os_shell::get_release_changelog,
+            commands::github::fetch_github_text,
+            commands::github::get_release_changelog,
             upload::commands::upload_single_match,
             upload::commands::batch_upload_matches,
             signalr::get_signalr_status,
@@ -375,7 +374,7 @@ pub fn run() {
             portable_updater::check_portable_update,
             portable_updater::download_portable_update,
             portable_updater::apply_portable_update,
-            commands::os_shell::show_bench_overlay_window,
+            commands::window_ui::show_bench_overlay_window,
             saved_players::commands::save_saved_player,
             saved_players::commands::set_player_list_kind,
             saved_players::commands::query_all_saved_players,

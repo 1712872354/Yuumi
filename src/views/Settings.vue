@@ -158,21 +158,6 @@ async function handleOpenLogFolder() {
         </div>
       </div>
 
-      <div class="card-item border-bottom">
-        <div class="card-left">
-          <h3 class="card-title">{{ $t("settings.reserveGameInfoTitle") }}</h3>
-          <span class="card-desc">{{
-            $t("settings.reserveGameInfoDesc")
-          }}</span>
-        </div>
-        <div class="card-right">
-          <n-switch
-            v-model:value="config.Functions.EnableReserveGameinfo"
-            @update:value="autoSave"
-          />
-        </div>
-      </div>
-
       <div class="card-item">
         <div class="card-left">
           <h3 class="card-title">

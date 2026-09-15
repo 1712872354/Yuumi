@@ -20,6 +20,13 @@ import type {
   DisenchantItem,
   ActionProgressEvent,
 } from "../api/loot";
+import {
+  getLootDisplayName,
+  getFriendlyNameById as getFriendlyNameFromInventory,
+  isKeyFragmentLoot,
+  lootPriorityIndex,
+} from "../utils/lootNaming";
+import { toLootProgress } from "./lootProgress";
 
 export function useLoot() {
   const { showToast } = useToast();
@@ -74,53 +81,8 @@ export function useLoot() {
     confirmModalConfig.value.onConfirm();
   }
 
-  // ─── 辅助函数 ───
-
-  /** 将 ActionProgressEvent 安全转换为 LootProgressEvent，用于分解/升级/重随进度展示 */
-  function toLootProgress(evt: ActionProgressEvent, displayName: string, isReroll = false): LootProgressEvent {
-    if (evt.success) {
-      return {
-        current: evt.current,
-        total: evt.total,
-        success: true,
-        rewardName: isReroll ? `合成成功！获得: ${evt.rewardDesc}` : `${displayName}: ${evt.rewardDesc}`,
-        errorMsg: null,
-      };
-    }
-    return {
-      current: evt.current,
-      total: evt.total,
-      success: false,
-      rewardName: "",
-      errorMsg: isReroll ? (evt.errorMsg ?? "未知错误") : `${displayName}: ${evt.errorMsg}`,
-    };
-  }
-
-  function getLootDisplayName(loot: OpenableLoot): string {
-    const name = loot.name;
-    const id = loot.lootId;
-    if (id === "CHEST_promotion") return "宝箱";
-    if (id === "CHEST_champion_mastery" || id === "CHEST_generic" || id === "CHEST_hextech") return "海克斯科技宝箱";
-    if (id === "CHEST_premium") return "杰作宝箱";
-    if (id.toLowerCase() === "chest_128" || name.toLowerCase() === "chest_128") return "英雄魔法引擎";
-    if (id.toLowerCase() === "chest_129" || name.toLowerCase() === "chest_129") return "荣耀英雄魔法引擎";
-    if (id === "MATERIAL_key_fragment") return "钥匙碎片";
-    if (id === "MATERIAL_key") return "海克斯科技钥匙";
-    if (id === "MATERIAL_key_premium") return "杰作钥匙";
-    if (name === id) {
-      if (id.includes("ORB") || id.includes("orb")) return "法球";
-      if (id.includes("CAPSULE")) return "引擎/胶囊";
-    }
-    return name;
-  }
-
-  function isKeyFragmentLoot(loot: OpenableLoot): boolean {
-    return loot.lootId === "MATERIAL_key_fragment";
-  }
-
   function getFriendlyNameById(lootId: string): string {
-    const found = rawLootInventory.value.find(i => i.lootId === lootId);
-    return found?.itemDesc ?? lootId;
+    return getFriendlyNameFromInventory(rawLootInventory.value, lootId);
   }
 
   // ─── 排序与计算属性 ───
@@ -157,14 +119,6 @@ export function useLoot() {
     const premiumKey = rawLootInventory.value.find(item => item.lootId === "MATERIAL_key_premium");
     return (hextechKey?.count ?? 0) + (premiumKey?.count ?? 0);
   });
-
-  function lootPriorityIndex(lootId: string): number {
-    if (lootId === "CHEST_promotion") return 0;
-    if (lootId === "CHEST_champion_mastery" || lootId === "CHEST_generic" || lootId === "CHEST_hextech") return 1;
-    if (lootId.includes("ORB") || lootId.includes("orb")) return 2;
-    if (lootId.includes("CAPSULE")) return 3;
-    return 4;
-  }
 
   // ─── 碎片过滤 ───
 

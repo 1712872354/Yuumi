@@ -67,21 +67,6 @@ export function useGamePlayerData(
     currentGameId,
   } = storeToRefs(gameInfo);
 
-  function writeReserveData() {
-    // 对局信息页仅用实时数据：不再写入保留盘，避免与上一局串数据
-  }
-
-  // ── 对局信息页仅用实时数据：不从 localStorage 恢复上一局 ──
-
-  // ── localStorage 写入防抖（保留盘已禁用，仅作占位避免调用方改动） ──
-  let saveTimer: ReturnType<typeof setTimeout> | null = null;
-  function debouncedSavePlayerData() {
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-      writeReserveData();
-    }, 500);
-  }
-
   const myTeam = computed(() => {
     if (isGameActive.value) {
       if (gameflowMyTeam.value.length > 0) return gameflowMyTeam.value;
@@ -250,7 +235,6 @@ export function useGamePlayerData(
     currentSummonerId,
     currentSummonerPuuid,
     currentQueueId,
-    onPlayerSaved: debouncedSavePlayerData,
     resolveCarryChampionId,
   });
 
@@ -272,9 +256,10 @@ export function useGamePlayerData(
               p.bot ||
               p.isBot ||
               p.botChampionId ||
-              (p as PremadePlayerLike & { isHumanoid?: boolean }).isHumanoid ||
+              p.isHumanoid ||
               p.displayName ||
-              p.summonerName,
+              p.summonerName ||
+              p.championId,
             ),
         );
       }
@@ -302,12 +287,8 @@ export function useGamePlayerData(
       }
       return Promise.resolve();
     })
-      .then(() => {
-        writeReserveData();
-      })
       .catch((err) => {
         console.debug("[GameInfo] 后台队伍数据预加载失败:", err);
-        writeReserveData();
       });
   }
 
@@ -330,7 +311,6 @@ export function useGamePlayerData(
     premadeColorsTheir,
     activeTab,
     loadPlayerData,
-    writeReserveData,
     updateCurrentQueueId,
     requestSeq,
   });

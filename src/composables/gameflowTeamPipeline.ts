@@ -43,7 +43,6 @@ export interface TeamPipelineDeps {
     puuid?: string,
     fallback?: PremadePlayerLike,
   ) => Promise<void>;
-  writeReserveData: () => void;
   updateCurrentQueueId: () => Promise<void>;
   requestSeq: { value: number };
 }
@@ -69,7 +68,6 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
     premadeColorsTheir,
     activeTab,
     loadPlayerData,
-    writeReserveData,
     updateCurrentQueueId,
     requestSeq,
   } = deps;
@@ -149,9 +147,7 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
           loadPlayerData(p.cellId ?? 0, p.summonerId ?? 0, p.puuid, p),
         );
       void load(gameflowMyTeam.value).catch(() => {});
-      void load(gameflowTheirTeam.value)
-        .then(() => writeReserveData())
-        .catch(() => writeReserveData());
+      void load(gameflowTheirTeam.value).catch(() => {});
     } catch (e) {
       console.warn("[GameInfo] live teams 兜底失败:", e);
     }
@@ -276,14 +272,9 @@ export function createGameflowTeamPipeline(deps: TeamPipelineDeps) {
       console.debug("[GameInfo] 队伍数据加载异常:", e),
     );
 
-    loadTeam(background)
-      .then(() => {
-        if (!isStale()) writeReserveData();
-      })
-      .catch((err) => {
-        console.debug("[GameInfo] 队伍数据预加载失败:", err);
-        if (!isStale()) writeReserveData();
-      });
+    loadTeam(background).catch((err) =>
+      console.debug("[GameInfo] 队伍数据预加载失败:", err),
+    );
 
     // session 脱敏时：用 summonerId 补全 roster（post_game 同源），确保敌方也能拉战绩
     const lacksIdentity =

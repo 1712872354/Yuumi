@@ -29,6 +29,12 @@ export default defineConfig(async () => ({
   },
 
   build: {
+    // Tauri 使用系统 WebView2（现代 Chromium），可锁定高版本目标以获得更优 minify
+    target: "es2022",
+    // 生产包剥离 console/debugger（受 import.meta.env.DEV 守卫的开发日志仍保留）
+    esbuild: {
+      drop: ["console", "debugger"],
+    },
     rollupOptions: {
       input: {
         main: resolve(__dirname, "index.html"),

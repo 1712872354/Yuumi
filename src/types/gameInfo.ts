@@ -56,6 +56,8 @@ export interface PremadePlayerLike {
   isBot?: boolean;
   botChampionId?: number;
   botName?: string;
+  /** 自定义对局中 LCU 原生人机标记（人机放在 myTeam 且 isHumanoid:true） */
+  isHumanoid?: boolean;
   /** 选人阶段 LCU 分配的位置（TOP/JUNGLE/MIDDLE/BOTTOM/UTILITY） */
   assignedPosition?: string;
 }

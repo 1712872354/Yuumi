@@ -327,7 +327,7 @@ async fn do_auto_show(
         .unwrap_or("");
 
     let mut candidates = get_position_select_candidates(pos, cfg);
-    candidates.extend(cfg.auto_select_champion.iter().copied());
+    candidates.extend(cfg.auto_select.general.iter().copied());
     log::debug!("[autoShow] pos={}, candidates={:?}", pos, candidates);
 
     if candidates.is_empty() {
@@ -588,7 +588,7 @@ async fn do_auto_ban(
         .unwrap_or("");
 
     let mut candidates = get_position_ban_candidates(pos, cfg);
-    candidates.extend(cfg.auto_ban_champion.iter().copied());
+    candidates.extend(cfg.auto_ban.general.iter().copied());
 
     let all_bans: Vec<i32> = session
         .bans
@@ -707,7 +707,7 @@ async fn do_auto_pick(
         .unwrap_or("");
 
     let mut candidates = get_position_select_candidates(pos, cfg);
-    candidates.extend(cfg.auto_select_champion.iter().copied());
+    candidates.extend(cfg.auto_select.general.iter().copied());
     candidates.retain(|c| !all_bans.contains(c));
 
     if candidates.is_empty() {
@@ -761,7 +761,7 @@ async fn do_auto_spell(
     let mut spells = get_position_spell_candidates(pos, cfg);
 
     if spells.contains(&54) || spells.is_empty() {
-        spells = cfg.auto_set_summoner_spell.clone();
+        spells = cfg.auto_set_spells.general.clone();
     }
     if spells.len() < 2 || spells.contains(&54) {
         log::debug!("召唤师技能未配置完整，跳过");
@@ -829,34 +829,13 @@ async fn lcu_get_session(app_handle: &AppHandle) -> Option<ChampSelectSession> {
 // ─── 候选列表工具函数 ───
 
 fn get_position_select_candidates(pos: &str, cfg: &FunctionsConfig) -> Vec<i32> {
-    match pos {
-        "top" => cfg.auto_select_champion_top.clone(),
-        "jungle" => cfg.auto_select_champion_jug.clone(),
-        "middle" => cfg.auto_select_champion_mid.clone(),
-        "bottom" => cfg.auto_select_champion_bot.clone(),
-        "utility" => cfg.auto_select_champion_sup.clone(),
-        _ => Vec::new(),
-    }
+    cfg.auto_select.for_position(pos).to_vec()
 }
 
 fn get_position_ban_candidates(pos: &str, cfg: &FunctionsConfig) -> Vec<i32> {
-    match pos {
-        "top" => cfg.auto_ban_champion_top.clone(),
-        "jungle" => cfg.auto_ban_champion_jug.clone(),
-        "middle" => cfg.auto_ban_champion_mid.clone(),
-        "bottom" => cfg.auto_ban_champion_bot.clone(),
-        "utility" => cfg.auto_ban_champion_sup.clone(),
-        _ => Vec::new(),
-    }
+    cfg.auto_ban.for_position(pos).to_vec()
 }
 
 fn get_position_spell_candidates(pos: &str, cfg: &FunctionsConfig) -> Vec<i32> {
-    match pos {
-        "top" => cfg.auto_set_summoner_spell_top.clone(),
-        "jungle" => cfg.auto_set_summoner_spell_jug.clone(),
-        "middle" => cfg.auto_set_summoner_spell_mid.clone(),
-        "bottom" => cfg.auto_set_summoner_spell_bot.clone(),
-        "utility" => cfg.auto_set_summoner_spell_sup.clone(),
-        _ => Vec::new(),
-    }
+    cfg.auto_set_spells.for_position(pos).to_vec()
 }

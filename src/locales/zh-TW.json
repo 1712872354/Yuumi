@@ -64,8 +64,6 @@
     "defaultGamesDesc": "調整在個人生涯界面中顯示的最大對局數量",
     "gameInfoFilterTitle": "對局信息過濾",
     "gameInfoFilterDesc": "基於你當前遊戲模式（地圖/隊列）篩選戰績，只顯示相同模式的玩家歷史數據",
-    "reserveGameInfoTitle": "保留對局信息界面內容",
-    "reserveGameInfoDesc": "保留上一局對局信息內容直到下一次對局開始",
     "showTierInGameInfoTitle": "對局詳情中顯示段位",
     "showTierInGameInfoDesc": "在搜索界面對局詳情界面中顯示段位，啟動該選項將影響加載界面的速度",
     "autoSave": "設置已自動保存",

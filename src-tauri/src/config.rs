@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// 当前配置版本号。配置结构发生破坏性变更（字段重命名/移动/类型变化）时递增，
-/// 并在 [`AppConfig::migrate`] 中实现从旧版本到新版本的幂等迁移。
-pub const CONFIG_VERSION: u32 = 2;
+/// 当前配置版本号。破坏性变更时递增；v3 起分路候选为嵌套 RoleCandidatePool，
+/// 不兼容旧扁平字段（旧配置中对应分路池为空，需用户重新配置）。
+pub const CONFIG_VERSION: u32 = 3;
 
 /// lol_path 列表中的特殊标记：表示该条目为「启动 WeGame」而非真实客户端路径。
 /// 真实路径不可能恰好等于该字符串，可作为安全的判别值。
@@ -78,6 +78,33 @@ fn default_auto_tag_sensitivity() -> u32 {
     1
 }
 
+/// 分路候选池（通用 + 五路）。选人 / 禁人 / 召唤师技能共用。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+#[serde(default)]
+pub struct RoleCandidatePool {
+    pub general: Vec<i32>,
+    pub top: Vec<i32>,
+    pub jug: Vec<i32>,
+    pub mid: Vec<i32>,
+    pub bot: Vec<i32>,
+    pub sup: Vec<i32>,
+}
+
+impl RoleCandidatePool {
+    /// 按 LCU assignedPosition 取分路池；未知位置返回空（调用方仍可并入 general）。
+    pub fn for_position(&self, pos: &str) -> &[i32] {
+        match pos {
+            "top" => &self.top,
+            "jungle" => &self.jug,
+            "middle" => &self.mid,
+            "bottom" => &self.bot,
+            "utility" => &self.sup,
+            _ => &[],
+        }
+    }
+}
+
 fn default_theme_color() -> String {
     "#009faa".into()
 }
@@ -141,21 +168,11 @@ pub struct FunctionsConfig {
 
     // 自动选人（通用 + 分路）
     pub enable_auto_select_champion: bool,
-    pub auto_select_champion: Vec<i32>,
-    pub auto_select_champion_top: Vec<i32>,
-    pub auto_select_champion_jug: Vec<i32>,
-    pub auto_select_champion_mid: Vec<i32>,
-    pub auto_select_champion_bot: Vec<i32>,
-    pub auto_select_champion_sup: Vec<i32>,
+    pub auto_select: RoleCandidatePool,
 
     // 自动禁人（通用 + 分路）
     pub enable_auto_ban_champion: bool,
-    pub auto_ban_champion: Vec<i32>,
-    pub auto_ban_champion_top: Vec<i32>,
-    pub auto_ban_champion_jug: Vec<i32>,
-    pub auto_ban_champion_mid: Vec<i32>,
-    pub auto_ban_champion_bot: Vec<i32>,
-    pub auto_ban_champion_sup: Vec<i32>,
+    pub auto_ban: RoleCandidatePool,
     pub auto_ban_delay: f64,
     pub pretend_ban: bool,
 
@@ -165,16 +182,9 @@ pub struct FunctionsConfig {
 
     // 自动召唤师技能（通用 + 分路）
     pub enable_auto_set_spells: bool,
-    pub auto_set_summoner_spell: Vec<i32>,
-    pub auto_set_summoner_spell_top: Vec<i32>,
-    pub auto_set_summoner_spell_jug: Vec<i32>,
-    pub auto_set_summoner_spell_mid: Vec<i32>,
-    pub auto_set_summoner_spell_bot: Vec<i32>,
-    pub auto_set_summoner_spell_sup: Vec<i32>,
+    pub auto_set_spells: RoleCandidatePool,
 
-    // 对局信息保留 & LCU 实时查询
-    #[serde(default)]
-    pub enable_reserve_gameinfo: bool,
+    // LCU 实时查询
     #[serde(default)]
     pub lcu_realtime_enabled: bool,
     #[serde(default)]
@@ -250,31 +260,15 @@ impl Default for FunctionsConfig {
             auto_accept_matching_delay: 0,
             enable_random_skin: false,
             enable_auto_select_champion: false,
-            auto_select_champion: Vec::new(),
-            auto_select_champion_top: Vec::new(),
-            auto_select_champion_jug: Vec::new(),
-            auto_select_champion_mid: Vec::new(),
-            auto_select_champion_bot: Vec::new(),
-            auto_select_champion_sup: Vec::new(),
+            auto_select: RoleCandidatePool::default(),
             enable_auto_ban_champion: false,
-            auto_ban_champion: Vec::new(),
-            auto_ban_champion_top: Vec::new(),
-            auto_ban_champion_jug: Vec::new(),
-            auto_ban_champion_mid: Vec::new(),
-            auto_ban_champion_bot: Vec::new(),
-            auto_ban_champion_sup: Vec::new(),
+            auto_ban: RoleCandidatePool::default(),
             auto_ban_delay: 0.0,
             pretend_ban: false,
             auto_accept_ceil_swap: false,
             auto_accept_champ_trade: false,
             enable_auto_set_spells: false,
-            auto_set_summoner_spell: Vec::new(),
-            auto_set_summoner_spell_top: Vec::new(),
-            auto_set_summoner_spell_jug: Vec::new(),
-            auto_set_summoner_spell_mid: Vec::new(),
-            auto_set_summoner_spell_bot: Vec::new(),
-            auto_set_summoner_spell_sup: Vec::new(),
-            enable_reserve_gameinfo: true,
+            auto_set_spells: RoleCandidatePool::default(),
             lcu_realtime_enabled: false,
             enable_auto_hover_champion: false,
             auto_select_confirm_on_timeout: true,
@@ -350,12 +344,11 @@ impl AppConfig {
         }
         let old = self.version;
         // 版本升级脚本：从低版本逐级迁移，每一步幂等。
-        // v1 → v2：HTTP 代理字段重命名（EnableGithubProxy/GithubProxyAddr
-        //   → EnableHttpProxy/HttpProxyAddr），已由 serde alias 在解析时兼容，
-        //   无需数据变换，仅递增版本号以触发配置落盘重写为新格式。
+        // v1 → v2：HTTP 代理字段重命名，已由 serde alias 在解析时兼容。
+        // v2 → v3：分路候选嵌套化；旧扁平字段被忽略，分路池走默认空列表（不兼容旧配置）。
         while self.version < CONFIG_VERSION {
             match self.version {
-                1 => {} // v1 → v2 无数据变换
+                1 | 2 => {}
                 _ => log::warn!("未知配置版本 {}，直接升级到当前版本", self.version),
             }
             self.version += 1;
@@ -422,32 +415,34 @@ impl AppConfig {
                 cfg
             }
             Err(e) => {
-                // 备份损坏的配置文件
-                if let Some(parent) = path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let backup_path = path.with_extension(format!("json.backup.{}", ts));
-                if let Err(be) = std::fs::copy(&path, &backup_path) {
-                    log::warn!("备份损坏配置文件失败: {}", be);
-                } else {
-                    log::warn!("配置文件解析失败，已备份到: {}", backup_path.display());
-                }
-                // 写入错误提示文件，供前端读取
-                let error_path = path.with_extension("json.error");
-                let error_msg = format!(
-                    "配置文件格式错误，已恢复为默认设置。\n错误详情: {}\n原文件已备份至: {}",
-                    e,
-                    backup_path.display()
-                );
-                let _ = std::fs::write(&error_path, &error_msg);
-                log::error!("配置文件解析失败，使用默认值: {}", e);
+                Self::backup_corrupt_config(&path, &e.to_string());
                 Self::default()
             }
         }
+    }
+
+    fn backup_corrupt_config(path: &std::path::Path, err: &str) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let backup_path = path.with_extension(format!("json.backup.{}", ts));
+        if let Err(be) = std::fs::copy(path, &backup_path) {
+            log::warn!("备份损坏配置文件失败: {}", be);
+        } else {
+            log::warn!("配置文件解析失败，已备份到: {}", backup_path.display());
+        }
+        let error_path = path.with_extension("json.error");
+        let error_msg = format!(
+            "配置文件格式错误，已恢复为默认设置。\n错误详情: {}\n原文件已备份至: {}",
+            err,
+            backup_path.display()
+        );
+        let _ = std::fs::write(&error_path, &error_msg);
+        log::error!("配置文件解析失败，使用默认值: {}", err);
     }
 
     /// 读取配置加载错误信息（前端调用，读取后自动清除）

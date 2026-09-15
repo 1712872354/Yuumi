@@ -64,8 +64,6 @@
     "defaultGamesDesc": "Max games shown in career view",
     "gameInfoFilterTitle": "Filter Game Info",
     "gameInfoFilterDesc": "Filter match history based on current game mode (map/queue)",
-    "reserveGameInfoTitle": "Reserve Game Info",
-    "reserveGameInfoDesc": "Keep last game info until next game starts",
     "showTierInGameInfoTitle": "Show Tier in Game Info",
     "showTierInGameInfoDesc": "Show rank tier in game info details. Enabling this may affect page load speed",
     "autoSave": "Settings auto-saved",

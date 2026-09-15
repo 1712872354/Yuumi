@@ -1,11 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import type { CherryAugmentDetail } from "../../types/lcu";
 
-export interface CherryAugmentDetail {
-  id: number;
-  name: string;
-  iconPath: string;
-  description: string;
-}
+export type { CherryAugmentDetail };
 
 export interface MatchDisplay {
   queueId: number;
